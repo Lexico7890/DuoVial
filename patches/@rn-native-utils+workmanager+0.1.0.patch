@@ -1,0 +1,13 @@
+diff --git a/node_modules/@rn-native-utils/workmanager/android/src/main/java/com/backgroundsync/worker/BackgroundWorker.kt b/node_modules/@rn-native-utils/workmanager/android/src/main/java/com/backgroundsync/worker/BackgroundWorker.kt
+index b2ec210..ddefb98 100644
+--- a/node_modules/@rn-native-utils/workmanager/android/src/main/java/com/backgroundsync/worker/BackgroundWorker.kt
++++ b/node_modules/@rn-native-utils/workmanager/android/src/main/java/com/backgroundsync/worker/BackgroundWorker.kt
+@@ -13,7 +13,7 @@ class BackgroundSyncWorker(context: Context, workerParams: WorkerParameters) :
+   HeadlessWorker(context, workerParams) {
+   override fun getTaskConfig(data: Data?): HeadlessJsTaskConfig? {
+     Log.d("TAG", "getTaskConfig: $data")
+-    val taskKey= data?.getString("taskKey")
++    val taskKey= data?.getString("taskKey") ?: "defaultSyncTask"
+     val maxRetryAttempts = data?.getInt("maxRetryAttempts", 3)
+     val retryDelay = data?.getInt("retryDelay", 4000)
+     val taskTimeout = data?.getLong("taskTimeout", 10000L)
