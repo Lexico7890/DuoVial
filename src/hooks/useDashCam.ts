@@ -3,232 +3,261 @@ import { Alert } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import RNFS from 'react-native-fs';
 
-const SEGMENT_DURATION_MS = 15_000;
-const COOLDOWN_MS = 20_000; // Reducido para facilitar pruebas
+// ── Configuración del buffer circular ────────────────────────────────────────
+const MINI_SEGMENT_MS  = 5_000; // Cada mini-segmento dura 5s
+const PRE_QUEUE_SIZE   = 4;     // Mantener últimos 4 × 5s = 20s de historia
+const POST_SEGMENT_MS  = 16_000;// 16s de grabación POST-impacto
+const COOLDOWN_MS      = 10_000; // Bloquear re-trigger por 10s
+const CAM_SETTLE_MS    = 800;   // Tiempo entre stop/start de la cámara
 
-export type DashCamStatus = 'idle' | 'recording' | 'saving' | 'cooldown';
+export type DashCamStatus = 'idle' | 'recording' | 'post_impact' | 'cooldown';
 
 export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
-  const [status, setStatus] = useState<DashCamStatus>('idle');
-  // Exponer segmentos completados para debug en la UI
-  const [segmentCount, setSegmentCount] = useState(0);
+  const [status, setStatus]       = useState<DashCamStatus>('idle');
+  const [queueSize, setQueueSize] = useState(0); // Para mostrar en UI
 
-  // Paths REALES retornados por onRecordingFinished
-  const prevSegmentPath = useRef<string | null>(null);
-  const currentSegmentPath = useRef<string | null>(null);
+  // Cola circular de segmentos completados (paths reales de VisionCamera)
+  const preQueue         = useRef<string[]>([]);
+  const isRecordingRef   = useRef(false);
+  const isHandlingImpact = useRef(false);
 
-  // Resolver para esperar onRecordingFinished
-  const segmentResolverRef = useRef<((path: string | null) => void) | null>(null);
+  const segmentTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const postTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Resolver para esperar el cierre del segmento actual
+  const resolverRef        = useRef<((p: string | null) => void) | null>(null);
 
-  const segmentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isRecordingRef = useRef(false);
-  const isSavingRef = useRef(false);
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const clearAllTimers = () => {
+    [segmentTimerRef, postTimerRef, settleTimerRef].forEach((t) => {
+      if (t.current) { clearTimeout(t.current); t.current = null; }
+    });
+  };
 
-  // ── Iniciar un nuevo segmento de grabación ──────────────────────────────────
-  const startNewSegment = useCallback(() => {
-    const cam = cameraRef.current;
-    if (!cam) {
-      console.warn('[DashCam] startNewSegment: cameraRef.current es null');
-      return;
+  const safeDelete = (path: string | null) => {
+    if (!path) return;
+    RNFS.exists(path).then((e) => { if (e) RNFS.unlink(path).catch(() => {}); });
+  };
+
+  const addToQueue = (path: string) => {
+    const q = preQueue.current;
+    q.push(path);
+    // Eliminar el más antiguo si supera el límite
+    while (q.length > PRE_QUEUE_SIZE) {
+      safeDelete(q.shift() ?? null);
     }
+    setQueueSize(q.length);
+    console.log(`[DashCam] Cola PRE: ${q.length}/${PRE_QUEUE_SIZE} segmentos`);
+  };
 
-    // Rotar: el segmento actual (path conocido) pasa a ser el "previo"
-    prevSegmentPath.current = currentSegmentPath.current;
-    currentSegmentPath.current = null; // Lo llenará onRecordingFinished con el path real
+  const clearQueue = useCallback(() => {
+    preQueue.current.forEach((p) => safeDelete(p));
+    preQueue.current = [];
+    setQueueSize(0);
+  }, []);
 
-    console.log(`[DashCam] ▶ Nuevo segmento. Previo: ${prevSegmentPath.current ?? 'ninguno'}`);
+  // ── Mini-segmento (5s, se rota automáticamente) ────────────────────────────
+  const startMiniSegment = useCallback(() => {
+    const cam = cameraRef.current;
+    if (!cam || !isRecordingRef.current || isHandlingImpact.current) return;
+
+    console.log('[DashCam] ▶ Iniciando mini-segmento PRE (5s)...');
 
     try {
       cam.startRecording({
         onRecordingFinished: (video) => {
-          const realPath = video.path;
-          console.log(`[DashCam] ✅ onRecordingFinished → path: ${realPath}`);
-          currentSegmentPath.current = realPath;
-          setSegmentCount((n) => n + 1);
+          console.log(`[DashCam] ✅ Mini-segmento: ${video.path}`);
 
-          // Resolver si handleImpact está esperando
-          if (segmentResolverRef.current) {
-            segmentResolverRef.current(realPath);
-            segmentResolverRef.current = null;
+          // Si handleImpact está esperando este path, entregárselo
+          if (resolverRef.current) {
+            resolverRef.current(video.path);
+            resolverRef.current = null;
+            return;
+          }
+
+          if (isHandlingImpact.current) {
+            safeDelete(video.path);
+            return;
+          }
+
+          // Rotación normal: añadir a la cola
+          addToQueue(video.path);
+
+          if (isRecordingRef.current && !isHandlingImpact.current) {
+            settleTimerRef.current = setTimeout(startMiniSegment, CAM_SETTLE_MS);
           }
         },
         onRecordingError: (err) => {
-          console.error(`[DashCam] ❌ onRecordingError: ${err.message}`);
-          if (segmentResolverRef.current) {
-            segmentResolverRef.current(null);
-            segmentResolverRef.current = null;
+          console.error('[DashCam] ❌ Error mini-segmento:', err.message);
+          if (resolverRef.current) { resolverRef.current(null); resolverRef.current = null; }
+          // Reintentar
+          if (isRecordingRef.current && !isHandlingImpact.current) {
+            settleTimerRef.current = setTimeout(startMiniSegment, 2000);
           }
         },
       });
-      console.log('[DashCam] cam.startRecording() llamado exitosamente');
     } catch (e: any) {
-      console.error('[DashCam] ❌ Excepción en startRecording:', e?.message ?? e);
+      console.error('[DashCam] Excepción startRecording:', e?.message);
+      return;
     }
 
-    // Auto-rotar después de SEGMENT_DURATION_MS
-    if (segmentTimerRef.current) clearTimeout(segmentTimerRef.current);
+    // Auto-parar a los 5s para rotar
     segmentTimerRef.current = setTimeout(() => {
-      if (!isRecordingRef.current || isSavingRef.current) return;
-      console.log('[DashCam] ⏱ Auto-rotando segmento...');
-
-      cameraRef.current?.stopRecording();
-
-      // Dar tiempo a onRecordingFinished y luego iniciar el siguiente
-      setTimeout(() => {
-        if (isRecordingRef.current && !isSavingRef.current) {
-          startNewSegment();
-        }
-      }, 3000);
-    }, SEGMENT_DURATION_MS);
+      if (!isRecordingRef.current || isHandlingImpact.current) return;
+      try { cameraRef.current?.stopRecording(); } catch (_) {}
+    }, MINI_SEGMENT_MS);
   }, [cameraRef]);
 
-  // ── Detener grabación actual y obtener su path real ─────────────────────────
-  const stopAndGetCurrentPath = useCallback((): Promise<string | null> => {
-    return new Promise((resolve) => {
-      const cam = cameraRef.current;
-
-      // Si ya tenemos un path registrado (segmento cerrado), usarlo directamente
-      if (currentSegmentPath.current) {
-        console.log(`[DashCam] Path ya disponible: ${currentSegmentPath.current}`);
-        resolve(currentSegmentPath.current);
-        return;
-      }
-
-      if (!cam) {
-        console.warn('[DashCam] stopAndGetCurrentPath: cameraRef nulo');
-        resolve(null);
-        return;
-      }
-
-      console.log('[DashCam] Esperando onRecordingFinished para obtener path...');
-      segmentResolverRef.current = resolve;
-
-      try {
-        cam.stopRecording();
-      } catch (e: any) {
-        console.error('[DashCam] Error al llamar stopRecording:', e?.message);
-      }
-
-      // Timeout de seguridad aumentado a 12 segundos
+  // ── Esperar que el segmento en curso termine ───────────────────────────────
+  const waitForCurrentSegment = (): Promise<string | null> =>
+    new Promise((resolve) => {
+      resolverRef.current = resolve;
+      try { cameraRef.current?.stopRecording(); } catch (_) {}
       setTimeout(() => {
-        if (segmentResolverRef.current) {
-          console.warn('[DashCam] ⚠ Timeout (12s) esperando onRecordingFinished. Path actual:', currentSegmentPath.current);
-          const fallback = currentSegmentPath.current; // Intentar usar lo que tengamos
-          segmentResolverRef.current(fallback);
-          segmentResolverRef.current = null;
-        }
-      }, 12_000);
+        if (resolverRef.current) { resolverRef.current(null); resolverRef.current = null; }
+      }, 8000);
     });
-  }, [cameraRef]);
 
-  // ── API pública ─────────────────────────────────────────────────────────────
+  // ── Cooldown compartido: solo bloquea trigger, cámara sigue grabando ───────
+  const resumeAfterCooldown = useCallback(() => {
+    setTimeout(() => {
+      isHandlingImpact.current = false;
+      if (isRecordingRef.current) {
+        setStatus('recording');
+        settleTimerRef.current = setTimeout(startMiniSegment, CAM_SETTLE_MS);
+      } else {
+        setStatus('idle');
+      }
+    }, COOLDOWN_MS);
+  }, [startMiniSegment]);
+
+  // ── API pública ────────────────────────────────────────────────────────────
   const startRecording = useCallback(() => {
     if (isRecordingRef.current) return;
-    isRecordingRef.current = true;
-    prevSegmentPath.current = null;
-    currentSegmentPath.current = null;
-    setSegmentCount(0);
+    clearAllTimers();
+    isRecordingRef.current   = true;
+    isHandlingImpact.current = false;
+    clearQueue();
     setStatus('recording');
-    console.log('[DashCam] 🎬 Iniciando grabación...');
-    startNewSegment();
-  }, [startNewSegment]);
+    console.log('[DashCam] 🎬 Buffer circular iniciado');
+    startMiniSegment();
+  }, [startMiniSegment, clearQueue]);
 
   const stopRecording = useCallback(async () => {
     if (!isRecordingRef.current) return;
-    console.log('[DashCam] ⏹ Deteniendo grabación...');
-    isRecordingRef.current = false;
-    isSavingRef.current = false;
-    if (segmentTimerRef.current) clearTimeout(segmentTimerRef.current);
-
+    isRecordingRef.current   = false;
+    isHandlingImpact.current = false;
+    clearAllTimers();
+    if (resolverRef.current) { resolverRef.current(null); resolverRef.current = null; }
     try { cameraRef.current?.stopRecording(); } catch (_) {}
-
     await new Promise<void>((r) => setTimeout(r, 2000));
-
-    for (const p of [prevSegmentPath.current, currentSegmentPath.current]) {
-      if (p) RNFS.exists(p).then((e) => { if (e) RNFS.unlink(p).catch(() => {}); });
-    }
-
-    prevSegmentPath.current = null;
-    currentSegmentPath.current = null;
-    setSegmentCount(0);
+    clearQueue();
     setStatus('idle');
-  }, [cameraRef]);
+  }, [cameraRef, clearQueue]);
 
   const handleImpact = useCallback(async () => {
-    if (!isRecordingRef.current || isSavingRef.current) {
+    if (!isRecordingRef.current || isHandlingImpact.current) {
       console.log('[DashCam] handleImpact ignorado');
       return;
     }
 
-    console.log('[DashCam] 💥 IMPACTO detectado');
-    isSavingRef.current = true;
-    setStatus('saving');
-    if (segmentTimerRef.current) clearTimeout(segmentTimerRef.current);
+    console.log('[DashCam] 💥 ¡IMPACTO!');
+    isHandlingImpact.current = true;
+    setStatus('post_impact');
+    if (segmentTimerRef.current) { clearTimeout(segmentTimerRef.current); segmentTimerRef.current = null; }
+    if (settleTimerRef.current)  { clearTimeout(settleTimerRef.current);  settleTimerRef.current = null; }
 
-    // ⚠ CRÍTICO: Capturar prevPath ANTES del await para no perderlo durante la rotación
-    const prePathSnapshot = prevSegmentPath.current;
+    // Snapshot de la cola ANTES de parar (preserva los segmentos pre-impacto)
+    const queueSnapshot = [...preQueue.current];
+    preQueue.current = []; // Vaciamos para que no sean borrados por addToQueue
+    setQueueSize(0);
 
-    // Obtener path del segmento actual (puede requerir esperar onRecordingFinished)
-    const postPath = await stopAndGetCurrentPath();
+    // Event ID único para identificar el par de clips
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const eventId = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-    console.log(`[DashCam] Pre-path capturado: ${prePathSnapshot ?? 'null'}`);
-    console.log(`[DashCam] Post-path recibido: ${postPath ?? 'null'}`);
+    console.log(`[DashCam] EventID=${eventId} · PRE en cola: ${queueSnapshot.length}`);
 
+    // Obtener el segmento actual en curso (del momento del choque)
+    const currentPath = await waitForCurrentSegment();
+    if (currentPath) {
+      queueSnapshot.push(currentPath);
+      console.log(`[DashCam] Segmento del momento del choque añadido: ${currentPath}`);
+    }
+
+    // Guardar todos los segmentos PRE en Descargas
     const downloadsDir = `${RNFS.ExternalStorageDirectoryPath}/Download`;
-    const timestamp = Date.now();
-    let savedCount = 0;
-    const savedFiles: string[] = [];
+    const savedPre: string[] = [];
 
-    for (const [label, srcPath] of [['pre', prePathSnapshot], ['post', postPath]] as const) {
-      if (!srcPath) {
-        console.log(`[DashCam] ${label}: sin path disponible, omitiendo`);
-        continue;
-      }
+    for (let i = 0; i < queueSnapshot.length; i++) {
+      const src = queueSnapshot[i];
       try {
-        const exists = await RNFS.exists(srcPath);
-        console.log(`[DashCam] ${label} existe=${exists} → ${srcPath}`);
-        if (exists) {
-          const dest = `${downloadsDir}/DuoVial_${label}_${timestamp}.mp4`;
-          await RNFS.copyFile(srcPath, dest);
-          await RNFS.unlink(srcPath).catch(() => {});
-          if (label === 'pre') prevSegmentPath.current = null;
-          if (label === 'post') currentSegmentPath.current = null;
-          savedCount++;
-          savedFiles.push(dest);
-          console.log(`[DashCam] ✅ ${label} → ${dest}`);
+        if (src && await RNFS.exists(src)) {
+          const dest = `${downloadsDir}/DuoVial_${eventId}_pre${i + 1}.mp4`;
+          await RNFS.copyFile(src, dest);
+          await RNFS.unlink(src).catch(() => {});
+          savedPre.push(dest);
+          console.log(`[DashCam] ✅ pre${i+1} → ${dest}`);
         }
       } catch (e: any) {
-        console.error(`[DashCam] Error guardando ${label}:`, e?.message ?? e);
+        console.error(`[DashCam] Error pre${i+1}:`, e?.message);
       }
     }
 
-    if (savedCount > 0) {
-      Alert.alert(
-        '¡Impacto registrado! 🎬',
-        `${savedCount} clip(s) guardados en Descargas:\n${savedFiles.map((f) => f.split('/').pop()).join('\n')}`
-      );
-    } else {
-      Alert.alert(
-        'Sin video disponible',
-        `Segmentos completados: ${segmentCount}\nPre: ${prePathSnapshot ?? 'null'}\nPost: ${postPath ?? 'null'}\n\n` +
-        (segmentCount === 0
-          ? '⚠ Ningún segmento se completó aún. Espera al menos 15s grabando antes de agitar.'
-          : '⚠ Los archivos existen en metadata pero no en disco. Revisa permisos de almacenamiento.')
-      );
+    // Iniciar grabación POST-impacto (16s)
+    const cam = cameraRef.current;
+    if (!cam || !isRecordingRef.current) {
+      Alert.alert('Clips PRE guardados', `${savedPre.length} clip(s) en Descargas.\nID: ${eventId}`);
+      resumeAfterCooldown();
+      return;
     }
 
-    setStatus('cooldown');
-    setTimeout(() => {
-      if (isRecordingRef.current) {
-        isSavingRef.current = false;
-        setStatus('recording');
-        startNewSegment();
-      } else {
-        isSavingRef.current = false;
-        setStatus('idle');
-      }
-    }, COOLDOWN_MS);
-  }, [cameraRef, stopAndGetCurrentPath, startNewSegment, segmentCount]);
+    console.log('[DashCam] ▶ POST-impacto (16s)...');
+    try {
+      cam.startRecording({
+        onRecordingFinished: async (video) => {
+          let postSaved = false;
+          try {
+            if (await RNFS.exists(video.path)) {
+              const dest = `${downloadsDir}/DuoVial_${eventId}_post.mp4`;
+              await RNFS.copyFile(video.path, dest);
+              await RNFS.unlink(video.path).catch(() => {});
+              postSaved = true;
+              console.log(`[DashCam] ✅ post → ${dest}`);
+            }
+          } catch (e: any) { console.error('[DashCam] Error post:', e?.message); }
 
-  return { status, segmentCount, startRecording, stopRecording, handleImpact };
+          const preSeconds = queueSnapshot.length * (MINI_SEGMENT_MS / 1000);
+          Alert.alert(
+            '🎬 Evento grabado',
+            `ID: ${eventId}\n\n` +
+            `• PRE: ${savedPre.length} clip(s) (~${preSeconds}s antes del choque)\n` +
+            `• POST: ${postSaved ? '16s ✅' : 'Error ❌'}\n\n` +
+            `Busca archivos "DuoVial_${eventId}_*" en Descargas.`
+          );
+
+          resumeAfterCooldown();
+        },
+        onRecordingError: (err) => {
+          console.error('[DashCam] Error POST:', err.message);
+          Alert.alert('Clips PRE guardados', `${savedPre.length} clip(s) PRE en Descargas.\nError grabando POST: ${err.message}`);
+          resumeAfterCooldown();
+        },
+      });
+    } catch (e: any) {
+      console.error('[DashCam] Excepción POST:', e?.message);
+      isHandlingImpact.current = false;
+      setStatus('idle');
+      return;
+    }
+
+    // Parar POST después de 16s
+    postTimerRef.current = setTimeout(() => {
+      console.log('[DashCam] ⏱ Parando POST-impacto...');
+      try { cameraRef.current?.stopRecording(); } catch (_) {}
+    }, POST_SEGMENT_MS);
+  }, [cameraRef, resumeAfterCooldown]);
+
+  return { status, queueSize, startRecording, stopRecording, handleImpact };
 }

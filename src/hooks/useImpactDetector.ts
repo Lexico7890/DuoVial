@@ -5,8 +5,8 @@ import type { Subscription } from 'rxjs';
 // Muestrear 20 veces por segundo
 setUpdateIntervalForType(SensorTypes.accelerometer, 50);
 
-export const G_FORCE_THRESHOLD = 2.5; // umbral real de impacto
-const COOLDOWN_MS = 35_000;
+export const G_FORCE_THRESHOLD = 2.0; // Impacto/golpe moderado-fuerte
+const COOLDOWN_MS = 10_000;
 
 export const useImpactDetector = (
   onImpact: () => void,
@@ -51,6 +51,7 @@ export const useImpactDetector = (
     return () => {
       subscription?.unsubscribe();
       if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+      isImpactedRef.current = false; // CRÍTICO: resetear al limpiar para no quedar bloqueado
     };
   }, [enabled]);
 
