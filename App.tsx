@@ -76,6 +76,7 @@ export default function App() {
 
   // ── Permisos ──────────────────────────────────────────────────────────────
   const requestPermissions = async (): Promise<boolean> => {
+    let micGranted = false;
     if (Platform.OS === 'android') {
       if (Platform.Version >= 33) {
         await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
@@ -84,8 +85,12 @@ export default function App() {
       if (camPerm !== 'granted') return false;
       setHasCameraPermission(true);
 
+      // VisionCamera needs explicit microphone permission on newer versions
+      const micPerm = await Camera.requestMicrophonePermission();
+      if (micPerm === 'granted') micGranted = true;
+
       const micR = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-      if (micR !== PermissionsAndroid.RESULTS.GRANTED) return false;
+      if (micR !== PermissionsAndroid.RESULTS.GRANTED && !micGranted) return false;
 
       await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
 
@@ -150,21 +155,23 @@ export default function App() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={device}
-            isActive={isRecording}
+            isActive={true} // Siempre activa para que se vea el preview
             video={true}
             audio={true}
             onInitialized={() => {
               if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-              if (!isCameraReady && isRecording) {
+              if (!isCameraReady) {
                 setIsCameraReady(true);
-                startRecording();
+                if (isRecording) {
+                  startRecording();
+                }
               }
             }}
             onError={(e) => console.error('[App] Camera error:', e.message)}
           />
         )}
 
-        <View style={[StyleSheet.absoluteFill, styles.overlay]} />
+        <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="none" />
         <SystemHeader />
 
         {/* Badge de estado de grabación */}
@@ -173,7 +180,7 @@ export default function App() {
             <Text style={styles.statusText}>
               {!isCameraReady
                 ? '⏳ Iniciando cámara...'
-                : `${statusLabel[status]} · Buffer: ${queueSize}/4 seg (~${queueSize * 5}s)`}
+                : `${statusLabel[status]} · Buffer: ${queueSize}/2 seg (~${queueSize * 15}s)`}
             </Text>
           </View>
         )}
@@ -190,7 +197,7 @@ export default function App() {
               disabled={queueSize === 0}
             >
               <Text style={[styles.testButtonText, queueSize === 0 && { color: 'rgba(255,215,0,0.4)' }]}>
-                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 5}s capturados)` : 'Espera 5s...'}
+                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 15}s capturados)` : 'Espera 15s...'}
               </Text>
             </TouchableOpacity>
           )}
