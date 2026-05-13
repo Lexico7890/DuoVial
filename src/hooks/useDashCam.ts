@@ -165,28 +165,32 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
     isHandlingImpact.current = true;
     setStatus('post_impact');
 
-    // Clear PRE timers to prevent auto-stopping at 15s
     if (segmentTimerRef.current) { clearTimeout(segmentTimerRef.current); segmentTimerRef.current = null; }
     if (settleTimerRef.current)  { clearTimeout(settleTimerRef.current);  settleTimerRef.current = null; }
 
-    // Snapshot of the queue (these are fully completed PRE files)
+    // Snapshot de la cola ANTES de parar (preserva los segmentos pre-impacto)
     const queueSnapshot = [...preQueue.current];
-    preQueue.current = []; // Empty the queue so it doesn't get cleared by logic
+    preQueue.current = []; // Vaciamos para que no sean borrados por addToQueue
     setQueueSize(0);
 
-    // Instead of stopping the camera immediately, we let it run for POST_SEGMENT_MS
-    // This eliminates the 4 second gap because the "PRE-impact" and "POST-impact"
-    // of the exact moment of the crash are contained within the SAME video file!
-
-    // We will save the previously completed PRE file (if any)
+    // Event ID único para identificar el par de clips
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const eventId = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-    const downloadsDir = `${RNFS.ExternalStorageDirectoryPath}/Download`;
-    const savedFiles: string[] = [];
+    console.log(`[DashCam] EventID=${eventId} · PRE en cola: ${queueSnapshot.length}`);
 
-    // Save completed PRE file
+    // Obtener el segmento actual en curso (del momento del choque)
+    const currentPath = await waitForCurrentSegment();
+    if (currentPath) {
+      queueSnapshot.push(currentPath);
+      console.log(`[DashCam] Segmento del momento del choque añadido: ${currentPath}`);
+    }
+
+    // Guardar todos los segmentos PRE en Descargas
+    const downloadsDir = RNFS.DownloadDirectoryPath || `${RNFS.ExternalStorageDirectoryPath}/Download`;
+    const savedPre: string[] = [];
+
     for (let i = 0; i < queueSnapshot.length; i++) {
       const src = queueSnapshot[i];
       try {
@@ -194,51 +198,68 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
           const dest = `${downloadsDir}/DuoVial_${eventId}_pre${i + 1}.mp4`;
           await RNFS.copyFile(src, dest);
           await RNFS.unlink(src).catch(() => {});
-          savedFiles.push(dest);
-          console.log(`[DashCam] ✅ PRE guardado → ${dest}`);
+          savedPre.push(dest);
+          console.log(`[DashCam] ✅ pre${i+1} → ${dest}`);
         }
       } catch (e: any) {
-        console.error(`[DashCam] Error guardando PRE ${i+1}:`, e?.message);
+        console.error(`[DashCam] Error pre${i+1}:`, e?.message);
       }
     }
 
-    // Now, wait 15 seconds to let the CURRENT video record the POST-impact footage
-    // This single video will contain up to 15s before impact + 15s after impact = ~30s max
-    await new Promise<void>((resolve) => {
-      postTimerRef.current = setTimeout(() => {
-        console.log('[DashCam] ⏱ Tiempo POST cumplido. Cerrando video principal...');
-        resolve();
-      }, POST_SEGMENT_MS);
-    });
-
-    // Stop recording to get the file
-    const currentPath = await waitForCurrentSegment();
-
-    if (currentPath) {
-      try {
-        if (await RNFS.exists(currentPath)) {
-          // This is the main impact video (contains the moment of impact)
-          const dest = `${downloadsDir}/DuoVial_${eventId}_impact.mp4`;
-          await RNFS.copyFile(currentPath, dest);
-          await RNFS.unlink(currentPath).catch(() => {});
-          savedFiles.push(dest);
-          console.log(`[DashCam] ✅ IMPACTO guardado → ${dest}`);
-        }
-      } catch (e: any) {
-        console.error('[DashCam] Error guardando IMPACTO:', e?.message);
-      }
+    // Iniciar grabación POST-impacto (16s)
+    const cam = cameraRef.current;
+    if (!cam || !isRecordingRef.current) {
+      Alert.alert('Clips PRE guardados', `${savedPre.length} clip(s) en Descargas.\nID: ${eventId}`);
+      resumeAfterCooldown();
+      return;
     }
 
-    const totalSaved = savedFiles.length;
-    Alert.alert(
-      '🎬 Evento grabado',
-      `ID: ${eventId}\n\n` +
-      `Se guardaron ${totalSaved} clip(s) sin interrupciones.\n\n` +
-      `Busca archivos "DuoVial_${eventId}_*" en Descargas.`
-    );
+    console.log('[DashCam] ▶ POST-impacto (16s)...');
+    try {
+      cam.startRecording({
+        onRecordingFinished: async (video) => {
+          let postSaved = false;
+          try {
+            if (await RNFS.exists(video.path)) {
+              const dest = `${downloadsDir}/DuoVial_${eventId}_post.mp4`;
+              await RNFS.copyFile(video.path, dest);
+              await RNFS.unlink(video.path).catch(() => {});
+              postSaved = true;
+              console.log(`[DashCam] ✅ post → ${dest}`);
+            }
+          } catch (e: any) { console.error('[DashCam] Error post:', e?.message); }
 
-    resumeAfterCooldown();
-  }, [resumeAfterCooldown]);
+          const preSeconds = queueSnapshot.length * (MINI_SEGMENT_MS / 1000);
+          Alert.alert(
+            '🎬 Evento grabado',
+            `ID: ${eventId}\n\n` +
+            `• PRE: ${savedPre.length} clip(s) (~${preSeconds}s antes del choque)\n` +
+            `• POST: ${postSaved ? '16s ✅' : 'Error ❌'}\n\n` +
+            `Busca archivos "DuoVial_${eventId}_*" en Descargas.`
+          );
+
+          resumeAfterCooldown();
+        },
+        onRecordingError: (err) => {
+          console.error('[DashCam] Error POST:', err.message);
+          Alert.alert('Clips PRE guardados', `${savedPre.length} clip(s) PRE en Descargas.\nError grabando POST: ${err.message}`);
+          resumeAfterCooldown();
+        },
+      });
+    } catch (e: any) {
+      console.error('[DashCam] Excepción POST:', e?.message);
+      isHandlingImpact.current = false;
+      setStatus('idle');
+      return;
+    }
+
+    // Parar POST después de 16s
+    postTimerRef.current = setTimeout(() => {
+      console.log('[DashCam] ⏱ Parando POST-impacto...');
+      try { cameraRef.current?.stopRecording(); } catch (_) {}
+    }, POST_SEGMENT_MS);
+
+  }, [cameraRef, resumeAfterCooldown]);
 
   return { status, queueSize, startRecording, stopRecording, handleImpact };
 }

@@ -85,12 +85,12 @@ export default function App() {
       if (camPerm !== 'granted') return false;
       setHasCameraPermission(true);
 
-      // VisionCamera needs explicit microphone permission on newer versions
-      const micPerm = await Camera.requestMicrophonePermission();
-      if (micPerm === 'granted') micGranted = true;
 
-      const micR = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-      if (micR !== PermissionsAndroid.RESULTS.GRANTED && !micGranted) return false;
+
+
+
+
+
 
       await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
 
@@ -183,7 +183,7 @@ export default function App() {
             <Text style={styles.statusText}>
               {!isCameraReady
                 ? '⏳ Iniciando cámara...'
-                : `${statusLabel[status]} · Buffer: ${queueSize}/2 seg (~${queueSize * 15}s)`}
+                : `${statusLabel[status]} · Buffer: ${queueSize}/1 seg (~${queueSize * 15}s)`}
             </Text>
           </View>
         )}
@@ -195,11 +195,12 @@ export default function App() {
           {/* Botón de prueba manual */}
           {isRecording && isCameraReady && status === 'recording' && (
             <TouchableOpacity
-              style={styles.testButton}
+              style={[styles.testButton, queueSize === 0 && styles.testButtonDisabled]}
               onPress={() => handleImpact()}
+              disabled={queueSize === 0}
             >
-              <Text style={styles.testButtonText}>
-                🧪 PROBAR (simular choque)
+              <Text style={[styles.testButtonText, queueSize === 0 && { color: 'rgba(255,215,0,0.4)' }]}>
+                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 15}s capturados)` : 'Espera 15s...'}
               </Text>
             </TouchableOpacity>
           )}
