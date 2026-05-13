@@ -46,11 +46,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    Camera.getCameraPermissionStatus().then((status) => {
-      if (status === 'granted') {
-        setHasCameraPermission(true);
-      }
-    });
+    const status = Camera.getCameraPermissionStatus();
+    if (status === 'granted') {
+      setHasCameraPermission(true);
+    }
   }, []);
   const [currentGForce, setCurrentGForce] = useState(0);
   const [speedInfo, setSpeedInfo] = useState<SpeedInfo>({ speedKmh: 0, deceleration: 0 });
