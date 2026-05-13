@@ -102,11 +102,18 @@ export default function App() {
   };
 
   // ── Toggle grabación ──────────────────────────────────────────────────────
+  // Efecto para iniciar la grabación automáticamente cuando la cámara esté lista
+  useEffect(() => {
+    if (isRecording && isCameraReady && status === 'idle') {
+      startRecording();
+    }
+  }, [isRecording, isCameraReady, status, startRecording]);
+
+  // ── Toggle grabación ──────────────────────────────────────────────────────
   const toggleRecording = async () => {
     if (isRecording) {
       await stopRecording();
       await BackgroundGuard.stopGuarding();
-      setIsCameraReady(false);
       setIsRecording(false);
     } else {
       const ok = await requestPermissions();
@@ -157,15 +164,11 @@ export default function App() {
             device={device}
             isActive={true} // Siempre activa para que se vea el preview
             video={true}
-            audio={true}
+            audio={false}
+            videoBitRate="low"
             onInitialized={() => {
               if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-              if (!isCameraReady) {
-                setIsCameraReady(true);
-                if (isRecording) {
-                  startRecording();
-                }
-              }
+              setIsCameraReady(true);
             }}
             onError={(e) => console.error('[App] Camera error:', e.message)}
           />
@@ -189,15 +192,14 @@ export default function App() {
         <View style={styles.recordContainer}>
           <RecordButton isRecording={isRecording} onToggle={toggleRecording} />
 
-          {/* Botón de prueba manual (solo visible cuando hay PRE listo) */}
+          {/* Botón de prueba manual */}
           {isRecording && isCameraReady && status === 'recording' && (
             <TouchableOpacity
-              style={[styles.testButton, queueSize === 0 && styles.testButtonDisabled]}
+              style={styles.testButton}
               onPress={() => handleImpact()}
-              disabled={queueSize === 0}
             >
-              <Text style={[styles.testButtonText, queueSize === 0 && { color: 'rgba(255,215,0,0.4)' }]}>
-                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 15}s capturados)` : 'Espera 15s...'}
+              <Text style={styles.testButtonText}>
+                🧪 PROBAR (simular choque)
               </Text>
             </TouchableOpacity>
           )}
