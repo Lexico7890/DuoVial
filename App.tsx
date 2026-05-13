@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet, View, StatusBar, SafeAreaView,
-  PermissionsAndroid, Platform, Text, TouchableOpacity,
+  PermissionsAndroid, Platform, Text, TouchableOpacity, AppState,
 } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
@@ -36,6 +36,22 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      setAppState(nextAppState);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    Camera.getCameraPermissionStatus().then((status) => {
+      if (status === 'granted') {
+        setHasCameraPermission(true);
+      }
+    });
+  }, []);
   const [currentGForce, setCurrentGForce] = useState(0);
   const [speedInfo, setSpeedInfo] = useState<SpeedInfo>({ speedKmh: 0, deceleration: 0 });
 
@@ -162,10 +178,9 @@ export default function App() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={device}
-            isActive={true} // Siempre activa para que se vea el preview
+            isActive={isRecording || appState === 'active'} // Activa en foreground O si está grabando
             video={true}
             audio={false}
-            videoBitRate="low"
             onInitialized={() => {
               if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
               setIsCameraReady(true);
