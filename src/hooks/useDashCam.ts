@@ -65,7 +65,8 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
 
     try {
       cam.startRecording({
-                onRecordingFinished: (video) => {
+        fileType: 'mp4',
+        onRecordingFinished: (video) => {
           console.log(`[DashCam] ✅ Mini-segmento: ${video.path}`);
 
           // Si handleImpact está esperando este path, entregárselo
@@ -98,6 +99,10 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
       });
     } catch (e: any) {
       console.error('[DashCam] Excepción startRecording:', e?.message);
+      // Reintentar en caso de excepción (ej. cámara ocupada)
+      if (isRecordingRef.current && !isHandlingImpact.current) {
+        settleTimerRef.current = setTimeout(startMiniSegment, 2000);
+      }
       return;
     }
 
@@ -217,6 +222,7 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
     console.log('[DashCam] ▶ POST-impacto (16s)...');
     try {
       cam.startRecording({
+        fileType: 'mp4',
         onRecordingFinished: async (video) => {
           let postSaved = false;
           try {
