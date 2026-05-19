@@ -4,11 +4,11 @@ import { Camera } from 'react-native-vision-camera';
 import RNFS from 'react-native-fs';
 
 // ── Configuración del buffer circular ────────────────────────────────────────
-const MINI_SEGMENT_MS  = 5_000; // Cada mini-segmento dura 5s
-const PRE_QUEUE_SIZE   = 4;     // Mantener últimos 4 × 5s = 20s de historia
-const POST_SEGMENT_MS  = 16_000;// 16s de grabación POST-impacto
+const MINI_SEGMENT_MS  = 15_000; // Cada mini-segmento dura 15s
+const PRE_QUEUE_SIZE   = 1;      // Mantener solo el último segmento completado (max 15s)
+const POST_SEGMENT_MS  = 16_000; // 16s de grabación POST-impacto
 const COOLDOWN_MS      = 10_000; // Bloquear re-trigger por 10s
-const CAM_SETTLE_MS    = 800;   // Tiempo entre stop/start de la cámara
+const CAM_SETTLE_MS    = 800;    // Tiempo entre stop/start de la cámara
 
 export type DashCamStatus = 'idle' | 'recording' | 'post_impact' | 'cooldown';
 
@@ -56,15 +56,16 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
     setQueueSize(0);
   }, []);
 
-  // ── Mini-segmento (5s, se rota automáticamente) ────────────────────────────
+  // ── Mini-segmento (15s, se rota automáticamente) ────────────────────────────
   const startMiniSegment = useCallback(() => {
     const cam = cameraRef.current;
     if (!cam || !isRecordingRef.current || isHandlingImpact.current) return;
 
-    console.log('[DashCam] ▶ Iniciando mini-segmento PRE (5s)...');
+    console.log('[DashCam] ▶ Iniciando mini-segmento PRE (15s)...');
 
     try {
       cam.startRecording({
+        fileType: 'mp4',
         onRecordingFinished: (video) => {
           console.log(`[DashCam] ✅ Mini-segmento: ${video.path}`);
 
@@ -98,10 +99,14 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
       });
     } catch (e: any) {
       console.error('[DashCam] Excepción startRecording:', e?.message);
+      // Reintentar en caso de excepción (ej. cámara ocupada)
+      if (isRecordingRef.current && !isHandlingImpact.current) {
+        settleTimerRef.current = setTimeout(startMiniSegment, 2000);
+      }
       return;
     }
 
-    // Auto-parar a los 5s para rotar
+    // Auto-parar a los 15s para rotar
     segmentTimerRef.current = setTimeout(() => {
       if (!isRecordingRef.current || isHandlingImpact.current) return;
       try { cameraRef.current?.stopRecording(); } catch (_) {}
@@ -161,9 +166,10 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
       return;
     }
 
-    console.log('[DashCam] 💥 ¡IMPACTO!');
+    console.log('[DashCam] 💥 ¡IMPACTO! Iniciando captura continua sin cortes...');
     isHandlingImpact.current = true;
     setStatus('post_impact');
+
     if (segmentTimerRef.current) { clearTimeout(segmentTimerRef.current); segmentTimerRef.current = null; }
     if (settleTimerRef.current)  { clearTimeout(settleTimerRef.current);  settleTimerRef.current = null; }
 
@@ -187,7 +193,7 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
     }
 
     // Guardar todos los segmentos PRE en Descargas
-    const downloadsDir = `${RNFS.ExternalStorageDirectoryPath}/Download`;
+    const downloadsDir = RNFS.DownloadDirectoryPath || `${RNFS.ExternalStorageDirectoryPath}/Download`;
     const savedPre: string[] = [];
 
     for (let i = 0; i < queueSnapshot.length; i++) {
@@ -216,6 +222,7 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
     console.log('[DashCam] ▶ POST-impacto (16s)...');
     try {
       cam.startRecording({
+        fileType: 'mp4',
         onRecordingFinished: async (video) => {
           let postSaved = false;
           try {
@@ -257,6 +264,7 @@ export function useDashCam(cameraRef: React.RefObject<Camera | null>) {
       console.log('[DashCam] ⏱ Parando POST-impacto...');
       try { cameraRef.current?.stopRecording(); } catch (_) {}
     }, POST_SEGMENT_MS);
+
   }, [cameraRef, resumeAfterCooldown]);
 
   return { status, queueSize, startRecording, stopRecording, handleImpact };

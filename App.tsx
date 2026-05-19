@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet, View, StatusBar, SafeAreaView,
-  PermissionsAndroid, Platform, Text, TouchableOpacity,
+  PermissionsAndroid, Platform, Text, TouchableOpacity, AppState,
 } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
@@ -10,7 +10,7 @@ import { StatusCard } from './src/components/StatusCard';
 import { BottomNav } from './src/components/BottomNav';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
-import { Camera, useCameraDevice } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useCameraFormat } from 'react-native-vision-camera';
 import { useDashCam } from './src/hooks/useDashCam';
 import { useImpactDetector, G_FORCE_THRESHOLD } from './src/hooks/useImpactDetector';
 import { useSpeedDetector, type SpeedInfo } from './src/hooks/useSpeedDetector';
@@ -36,12 +36,39 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
+
+  const [cameraKey, setCameraKey] = useState(0);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      // Si la app regresa a primer plano, forzamos un re-render del componente Camera
+      // para reconstruir el SurfaceView de Android y evitar la pantalla negra.
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('[App] Regresando a primer plano. Recargando vista de cámara...');
+        setCameraKey(k => k + 1);
+      }
+      setAppState(nextAppState);
+    });
+    return () => subscription.remove();
+  }, [appState]);
+
+  useEffect(() => {
+    const status = Camera.getCameraPermissionStatus();
+    if (status === 'granted') {
+      setHasCameraPermission(true);
+    }
+  }, []);
   const [currentGForce, setCurrentGForce] = useState(0);
   const [speedInfo, setSpeedInfo] = useState<SpeedInfo>({ speedKmh: 0, deceleration: 0 });
 
   const cameraRef       = useRef<Camera>(null);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const device          = useCameraDevice('back');
+  const format          = useCameraFormat(device, [
+    { videoResolution: { width: 1280, height: 720 } },
+    { fps: 30 }
+  ]);
 
   const { status, queueSize, startRecording, stopRecording, handleImpact } = useDashCam(cameraRef);
 
@@ -76,6 +103,7 @@ export default function App() {
 
   // ── Permisos ──────────────────────────────────────────────────────────────
   const requestPermissions = async (): Promise<boolean> => {
+    let micGranted = false;
     if (Platform.OS === 'android') {
       if (Platform.Version >= 33) {
         await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
@@ -84,8 +112,12 @@ export default function App() {
       if (camPerm !== 'granted') return false;
       setHasCameraPermission(true);
 
-      const micR = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-      if (micR !== PermissionsAndroid.RESULTS.GRANTED) return false;
+
+
+
+
+
+
 
       await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
 
@@ -97,11 +129,18 @@ export default function App() {
   };
 
   // ── Toggle grabación ──────────────────────────────────────────────────────
+  // Efecto para iniciar la grabación automáticamente cuando la cámara esté lista
+  useEffect(() => {
+    if (isRecording && isCameraReady && status === 'idle') {
+      startRecording();
+    }
+  }, [isRecording, isCameraReady, status, startRecording]);
+
+  // ── Toggle grabación ──────────────────────────────────────────────────────
   const toggleRecording = async () => {
     if (isRecording) {
       await stopRecording();
       await BackgroundGuard.stopGuarding();
-      setIsCameraReady(false);
       setIsRecording(false);
     } else {
       const ok = await requestPermissions();
@@ -147,24 +186,23 @@ export default function App() {
         {/* Cámara — siempre montada una vez hay permisos */}
         {hasCameraPermission && device && (
           <Camera
+            key={cameraKey} // <-- Fuerza el remount al volver de background
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={device}
-            isActive={isRecording}
+            format={format}
+            isActive={true} // Siempre activa para evitar pantalla negra
             video={true}
-            audio={true}
+            audio={false}
             onInitialized={() => {
               if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-              if (!isCameraReady && isRecording) {
-                setIsCameraReady(true);
-                startRecording();
-              }
+              setIsCameraReady(true);
             }}
             onError={(e) => console.error('[App] Camera error:', e.message)}
           />
         )}
 
-        <View style={[StyleSheet.absoluteFill, styles.overlay]} />
+        <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="none" />
         <SystemHeader />
 
         {/* Badge de estado de grabación */}
@@ -173,7 +211,7 @@ export default function App() {
             <Text style={styles.statusText}>
               {!isCameraReady
                 ? '⏳ Iniciando cámara...'
-                : `${statusLabel[status]} · Buffer: ${queueSize}/4 seg (~${queueSize * 5}s)`}
+                : `${statusLabel[status]} · Buffer: ${queueSize}/1 seg (~${queueSize * 15}s)`}
             </Text>
           </View>
         )}
@@ -182,15 +220,14 @@ export default function App() {
         <View style={styles.recordContainer}>
           <RecordButton isRecording={isRecording} onToggle={toggleRecording} />
 
-          {/* Botón de prueba manual (solo visible cuando hay PRE listo) */}
+          {/* Botón de prueba manual */}
           {isRecording && isCameraReady && status === 'recording' && (
             <TouchableOpacity
-              style={[styles.testButton, queueSize === 0 && styles.testButtonDisabled]}
+              style={styles.testButton}
               onPress={() => handleImpact()}
-              disabled={queueSize === 0}
             >
-              <Text style={[styles.testButtonText, queueSize === 0 && { color: 'rgba(255,215,0,0.4)' }]}>
-                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 5}s capturados)` : 'Espera 5s...'}
+              <Text style={styles.testButtonText}>
+                🧪 {queueSize > 0 ? `PROBAR (${queueSize * 15}s capturados)` : '🧪 PROBAR AHORA'}
               </Text>
             </TouchableOpacity>
           )}

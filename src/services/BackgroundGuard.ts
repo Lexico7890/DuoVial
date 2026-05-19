@@ -34,7 +34,7 @@ export class BackgroundGuard {
       message: 'La cámara está vigilando en segundo plano.',
       icon: 'ic_launcher', // Se usará este al no tener uno personalizado para esta fase
       // @ts-ignore: ServiceType form is required by Android 14 but not in types
-      ServiceType: 'dataSync', // Obligatorio para Android 10+
+      ServiceType: 'camera', // Obligatorio para Android 10+ para mantener la cámara viva en background
       button: true, // Mostrar un botón en la notificación (ej: Parar)
       buttonText: 'VER APP',
       buttonOnPress: 'crayola', 
