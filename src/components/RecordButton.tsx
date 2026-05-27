@@ -1,27 +1,42 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 
 interface RecordButtonProps {
   isRecording: boolean;
   onToggle: () => void;
+  disabled?: boolean;
 }
 
-export const RecordButton: React.FC<RecordButtonProps> = ({ isRecording, onToggle }) => {
-  const currentColor = isRecording ? colors.neonRed : colors.neonGreen;
-  const currentShadow = isRecording ? colors.neonRedShadow : colors.neonGreenShadow;
+export const RecordButton: React.FC<RecordButtonProps> = ({ isRecording, onToggle, disabled }) => {
+  const isSaving = disabled;
+
+  let currentColor = isRecording ? colors.neonRed : colors.neonGreen;
+  let currentShadow = isRecording ? colors.neonRedShadow : colors.neonGreenShadow;
+  let iconName: React.ComponentProps<typeof MaterialCommunityIcons>['name'] = isRecording ? 'alert-decagram' : 'video';
+  let buttonText = isRecording ? 'PÁNICO' : 'START';
+  let subText = isRecording ? 'REGISTRAR EVENTO' : 'VIGILANTE';
+
+  if (isSaving) {
+    currentColor = '#FF9F0A'; // Color Ámbar Neón para guardado en proceso
+    currentShadow = 'rgba(255, 159, 10, 0.4)';
+    iconName = 'progress-download';
+    buttonText = 'GUARDANDO';
+    subText = 'PROCESANDO...';
+  }
 
   return (
-    <View style={styles.container}>
-      {/* Outer Glow Rings */}
+    <View style={[styles.container, isSaving && { opacity: 0.9 }]}>
+      {/* Anillos de brillo exterior */}
       <View style={[styles.outerRing2, { borderColor: currentShadow }]} />
       <View style={[styles.outerRing1, { borderColor: currentShadow }]} />
       
-      {/* Main Button */}
+      {/* Botón principal */}
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={onToggle}
+        disabled={disabled}
         style={[
           styles.button,
           {
@@ -31,16 +46,16 @@ export const RecordButton: React.FC<RecordButtonProps> = ({ isRecording, onToggl
         ]}
       >
         <MaterialCommunityIcons 
-          name={isRecording ? 'alert-decagram' : 'video'} 
+          name={iconName} 
           size={50} 
           color="#000" 
           style={styles.icon}
         />
         <Text style={styles.text}>
-          {isRecording ? 'PÁNICO' : 'START'}
+          {buttonText}
         </Text>
         <Text style={styles.subText}>
-          {isRecording ? 'REGISTRAR EVENTO' : 'VIGILANTE'}
+          {subText}
         </Text>
       </TouchableOpacity>
     </View>
@@ -86,16 +101,16 @@ const styles = StyleSheet.create({
   },
   text: {
     color: '#000',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
     letterSpacing: 2,
     marginTop: 5,
   },
   subText: {
     color: '#000',
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 3,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2,
     marginTop: 2,
   },
 });

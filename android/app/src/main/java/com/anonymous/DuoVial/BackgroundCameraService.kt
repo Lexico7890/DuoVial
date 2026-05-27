@@ -11,9 +11,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -39,11 +36,10 @@ import java.io.FileInputStream
 import java.io.OutputStream
 
 /**
- * Servicio en primer plano (Foreground Service) nativo que maneja:
- * 1. Inicialización de CameraX para grabación en segundo plano sin UI.
- * 2. Buffer circular de 15 segundos alternando entre dos segmentos.
- * 3. Lógica de guardado preciso ante colisiones o pánico (2 o 3 partes).
- * 4. Sensores nativos (Giroscopio y Micrófono) de bajo consumo en background.
+ * Servicio en primer plano (Foreground Service) nativo re-calibrado:
+ * 1. Monitoreo por Acelerómetro nativo (Fuerza G > 2.5G) para detectar impactos reales.
+ * 2. Remoción total del micrófono (evita grabaciones de voz y falsos positivos de audio).
+ * 3. Bucle de buffer circular y lógica exacta de Escenarios 1 y 2.
  */
 class BackgroundCameraService : LifecycleService() {
 
@@ -61,19 +57,16 @@ class BackgroundCameraService : LifecycleService() {
     private var isSavingEvent = false
     private var shortSegmentSaving = false
     private var postEventRecordingActive = false
+    private var isScenario1 = false
     private var eventTimestamp = 0L
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // Giroscopio
+    // Acelerómetro nativo para impactos
     private var sensorManager: SensorManager? = null
-    private var gyroSensor: Sensor? = null
+    private var accelSensor: Sensor? = null
 
-    // Micrófono (Detección de decibeles)
-    private var isMonitoringAudio = false
-    private var audioRecordThread: Thread? = null
-
-    // Cooldown para Triggers (10 segundos)
+    // Cooldown para Triggers (12 segundos)
     private var lastEventTriggerTime = 0L
 
     // Runnable para la rotación automática del buffer cada 15 segundos
@@ -88,15 +81,23 @@ class BackgroundCameraService : LifecycleService() {
         currentActiveRecording?.stop()
     }
 
-    private val gyroListener = object : SensorEventListener {
+    // Listener del acelerómetro para Fuerza G
+    private val accelListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
-            if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+            if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
                 val x = event.values[0]
                 val y = event.values[1]
                 val z = event.values[2]
+                
+                // Magnitud total en m/s^2
                 val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble())
-                if (magnitude > 3.0) { // Rotación mayor a 3.0 rad/s
-                    triggerCollisionEvent("Giroscopio Rotación Brusca: ${String.format("%.2f", magnitude)} rad/s")
+                
+                // Conversión a Fuerza G (dividiendo por gravedad terrestre ~9.81 m/s^2)
+                val gForce = magnitude / SensorManager.GRAVITY_EARTH
+                
+                // Umbral recomendado de impacto > 2.5G
+                if (gForce > 2.5) {
+                    triggerCollisionEvent("Acelerómetro Impacto Detectado: ${String.format("%.2f", gForce)} G")
                 }
             }
         }
@@ -109,14 +110,12 @@ class BackgroundCameraService : LifecycleService() {
         startServiceNotification()
         startCameraX()
         startSensors()
-        startAudioMonitoring()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         Log.d(TAG, "Servicio iniciado...")
         
-        // Manejar llamadas manuales desde el módulo JS (p. ej. disparar Pánico)
         if (intent != null && intent.action == "ACTION_TRIGGER_PANIC") {
             triggerCollisionEvent("Botón de Pánico Manual")
         }
@@ -128,18 +127,30 @@ class BackgroundCameraService : LifecycleService() {
         Log.d(TAG, "Destruyendo servicio de cámara...")
         stopCircularBufferTimers()
         stopSensors()
-        stopAudioMonitoring()
         
         currentActiveRecording?.stop()
         currentActiveRecording = null
         
         cameraProvider?.unbindAll()
+        sendStatusUpdate("INACTIVO")
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
         return null
+    }
+
+    // Enviar broadcast local para actualizar la UI en JS
+    private fun sendStatusUpdate(status: String) {
+        try {
+            val intent = Intent("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED").apply {
+                putExtra("status", status)
+            }
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar broadcast: ${e.message}")
+        }
     }
 
     // ==========================================
@@ -192,7 +203,6 @@ class BackgroundCameraService : LifecycleService() {
             try {
                 cameraProvider = cameraProviderFuture.get()
                 
-                // Configurar el grabador (HD / 1080p o 720p según hardware)
                 val recorder = Recorder.Builder()
                     .setQualitySelector(QualitySelector.from(Quality.HD))
                     .build()
@@ -201,7 +211,6 @@ class BackgroundCameraService : LifecycleService() {
                 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
-                // Vincular videoCapture al ciclo de vida del servicio nativo
                 cameraProvider?.unbindAll()
                 cameraProvider?.bindToLifecycle(
                     this,
@@ -226,8 +235,9 @@ class BackgroundCameraService : LifecycleService() {
         isSavingEvent = false
         postEventRecordingActive = false
         shortSegmentSaving = false
+        isScenario1 = false
         
-        // Empezar grabando el primer segmento (index 0)
+        sendStatusUpdate("VIGILANDO")
         startRecordingSegment(0)
     }
 
@@ -246,7 +256,6 @@ class BackgroundCameraService : LifecycleService() {
         val fileOutputOptions = FileOutputOptions.Builder(segmentFile).build()
         
         try {
-            // Nota: No grabamos audio en el archivo de video (bitrate reducido, ahorro 30% CPU)
             val pendingRecording = videoCapture!!.output.prepareRecording(this, fileOutputOptions)
             
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
@@ -258,36 +267,22 @@ class BackgroundCameraService : LifecycleService() {
             recordingStartTime = System.currentTimeMillis()
             Log.d(TAG, "Grabando segmento_$index en caché...")
             
-            // Agendar la rotación en 15 segundos
             handler.postDelayed(rotateRunnable, 15000)
             
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Error de permisos al iniciar grabación: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar grabación: ${e.message}")
         }
     }
 
     private fun rotateCircularBuffer() {
-        // Detener la grabación actual. 
-        // El finalize listener gatillará el inicio del siguiente segmento (1 - index).
         currentActiveRecording?.stop()
     }
 
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
-        val error = event.error
-        if (error != VideoRecordEvent.Finalize.ERROR_NONE) {
-            Log.e(TAG, "Segmento finalizado con error: $error")
-        } else {
-            Log.d(TAG, "Segmento finalizado con éxito: ${event.outputResults.outputUri}")
-        }
-        
         if (!isSavingEvent) {
-            // Continuar con el ciclo normal del buffer circular
             val nextIndex = 1 - currentRecordingIndex
             startRecordingSegment(nextIndex)
         } else {
-            // Lógica de transición de guardado de evento
             handleEventSaveTransition()
         }
     }
@@ -303,7 +298,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun triggerCollisionEvent(reason: String) {
         val now = System.currentTimeMillis()
-        if (now - lastEventTriggerTime < 10000) { // Cooldown de 10 segundos
+        if (now - lastEventTriggerTime < 12000) {
             return
         }
         lastEventTriggerTime = now
@@ -324,48 +319,67 @@ class BackgroundCameraService : LifecycleService() {
         val duration = System.currentTimeMillis() - recordingStartTime
         Log.d(TAG, "Guardando evento. Duración del segmento actual: $duration ms")
         
-        if (duration < 14000) {
-            // CASO A (CORTO): Menos de 14 segundos en el segmento actual
-            // Conservaremos el segmento previo COMPLETO (15s) y el actual PARCIAL.
+        val prevIndex = 1 - currentRecordingIndex
+        val prevFile = File(cacheDir, "segment_$prevIndex.mp4")
+        val hasCompletedPrevFile = prevFile.exists() && prevFile.length() > 500000L
+        
+        if (!hasCompletedPrevFile) {
+            // ESCENARIO 1: Ocurre antes de completarse el primer frame
+            Log.d(TAG, "ESCENARIO 1 activo: Sin frame previo completo. Guardando segmento actual parcial.")
+            isScenario1 = true
             shortSegmentSaving = true
+            sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/2)")
             currentActiveRecording?.stop()
         } else {
-            // CASO B (LARGO): 14 o más segundos en el segmento actual
-            // Este segmento ya sirve como pre-evento completo.
-            shortSegmentSaving = false
-            currentActiveRecording?.stop()
+            // ESCENARIO 2: Existe un frame previo completo
+            isScenario1 = false
+            if (duration < 14000) {
+                // Buffer corto
+                Log.d(TAG, "ESCENARIO 2 activo (Buffer Corto < 14s). Guardando previo + actual parcial.")
+                shortSegmentSaving = true
+                sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/3)")
+                currentActiveRecording?.stop()
+            } else {
+                // Buffer largo
+                Log.d(TAG, "ESCENARIO 2 activo (Buffer Largo >= 14s). Guardando segmento actual completo.")
+                shortSegmentSaving = false
+                sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/2)")
+                currentActiveRecording?.stop()
+            }
         }
     }
 
     private fun handleEventSaveTransition() {
         if (!postEventRecordingActive) {
-            // Paso 1: Copiar los segmentos previos de pre-evento desde la caché
-            if (shortSegmentSaving) {
-                // Copiar el previo completo (si existe y tiene tamaño)
-                val prevIndex = 1 - currentRecordingIndex
-                copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
-                // Copiar el actual parcial
-                copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part1.mp4")
-            } else {
-                // Copiar únicamente el actual (ya que contiene >= 14 segundos)
+            if (isScenario1) {
                 copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+            } else {
+                if (shortSegmentSaving) {
+                    val prevIndex = 1 - currentRecordingIndex
+                    copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+                    copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part1.mp4")
+                } else {
+                    copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+                }
             }
             
-            // Paso 2: Iniciar la grabación de post-evento de 15 segundos adicionales
             postEventRecordingActive = true
             startPostEventRecording()
         } else {
-            // Paso 3: Acaba de finalizar el segmento de post-evento
-            val postPartSuffix = if (shortSegmentSaving) "part2" else "part1"
-            copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_$postPartSuffix.mp4")
+            val finalPartIndex = if (isScenario1) {
+                1
+            } else {
+                if (shortSegmentSaving) 2 else 1
+            }
+            
+            copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_part$finalPartIndex.mp4")
             
             Log.i(TAG, "✅ Incidente guardado con éxito. Reanudando buffer circular...")
+            sendStatusUpdate("VIGILANDO")
             
-            // Limpiar archivos de post-evento
             val postFile = File(cacheDir, "segment_post.mp4")
             if (postFile.exists()) postFile.delete()
             
-            // Reanudar el ciclo de buffer circular normal
             startCircularBuffer()
         }
     }
@@ -376,6 +390,8 @@ class BackgroundCameraService : LifecycleService() {
             startCircularBuffer()
             return
         }
+        
+        sendStatusUpdate("GRABANDO POST-EVENTO (15s)")
         
         val postFile = File(cacheDir, "segment_post.mp4")
         if (postFile.exists()) {
@@ -394,12 +410,10 @@ class BackgroundCameraService : LifecycleService() {
             }
             
             Log.d(TAG, "Grabando 15s de post-evento...")
-            
-            // Detener automáticamente en 15 segundos
             handler.postDelayed(stopPostEventRunnable, 15000)
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar grabación de post-evento: ${e.message}")
+            Log.e(TAG, "Error al iniciar post-evento: ${e.message}")
             startCircularBuffer()
         }
     }
@@ -414,8 +428,6 @@ class BackgroundCameraService : LifecycleService() {
             Log.w(TAG, "Archivo de origen no existe o está vacío: $sourceFileName")
             return
         }
-        
-        Log.d(TAG, "Exportando $sourceFileName a descargas públicas como $targetFileName")
         
         val contentValues = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, targetFileName)
@@ -448,119 +460,40 @@ class BackgroundCameraService : LifecycleService() {
                     outputStream?.write(buffer, 0, bytesRead)
                 }
                 outputStream?.flush()
-                Log.d(TAG, "Copiado exitoso a MediaStore: $targetFileName")
-            } else {
-                Log.e(TAG, "No se pudo crear el Uri en MediaStore para: $targetFileName")
+                Log.d(TAG, "Copiado exitoso a Downloads/DuoVial: $targetFileName")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Excepción al exportar archivo: ${e.message}")
+            Log.e(TAG, "Excepción al exportar: ${e.message}")
         } finally {
             try {
                 outputStream?.close()
                 inputStream?.close()
-            } catch (e: Exception) {
-                // Ignorar
-            }
+            } catch (e: Exception) {}
         }
     }
 
     // ==========================================
-    // CAPTURA DE SENSORES Y AUDIO EN BACKGROUND
+    // MONITOREO DE ACELERÓMETRO NATIVO (G-FORCE)
     // ==========================================
 
     private fun startSensors() {
         try {
             sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            gyroSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+            accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
             
-            if (gyroSensor != null) {
-                sensorManager?.registerListener(gyroListener, gyroSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                Log.d(TAG, "Giroscopio registrado y activo.")
+            if (accelSensor != null) {
+                sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
+                Log.d(TAG, "Acelerómetro registrado y activo para Fuerza G.")
             } else {
-                Log.w(TAG, "El giroscopio no está disponible en este dispositivo.")
+                Log.w(TAG, "El acelerómetro no está disponible en este dispositivo.")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error al registrar sensores: ${e.message}")
+            Log.e(TAG, "Error al registrar acelerómetro: ${e.message}")
         }
     }
 
     private fun stopSensors() {
-        sensorManager?.unregisterListener(gyroListener)
-    }
-
-    private fun startAudioMonitoring() {
-        isMonitoringAudio = true
-        audioRecordThread = Thread {
-            val sampleRate = 8000
-            val channelConfig = AudioFormat.CHANNEL_IN_MONO
-            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-            val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-            
-            if (bufferSize <= 0) {
-                Log.e(TAG, "Tamaño de búfer de audio inválido: $bufferSize")
-                return@Thread
-            }
-            
-            try {
-                // Requiere permiso RECORD_AUDIO
-                val recorder = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    sampleRate,
-                    channelConfig,
-                    audioFormat,
-                    bufferSize
-                )
-                
-                if (recorder.state == AudioRecord.STATE_INITIALIZED) {
-                    recorder.startRecording()
-                    val buffer = ShortArray(bufferSize)
-                    Log.d(TAG, "Monitoreo nativo de micrófono activo.")
-                    
-                    while (isMonitoringAudio) {
-                        val read = recorder.read(buffer, 0, buffer.size)
-                        if (read > 0) {
-                            var max = 0
-                            for (i in 0 until read) {
-                                val absVal = Math.abs(buffer[i].toInt())
-                                if (absVal > max) {
-                                    max = absVal
-                                }
-                            }
-                            
-                            val amplitude = max.toDouble()
-                            if (amplitude > 0) {
-                                val db = 20 * Math.log10(amplitude / 32767.0)
-                                // Si supera los -20dB (sonido extremadamente fuerte, ej. choque)
-                                if (db > -20.0) {
-                                    handler.post {
-                                        triggerCollisionEvent("Pico de Audio: ${db.toInt()} dB")
-                                    }
-                                }
-                            }
-                        }
-                        Thread.sleep(150)
-                    }
-                    try {
-                        recorder.stop()
-                        recorder.release()
-                    } catch (e: Exception) {
-                        // Ignorar
-                    }
-                } else {
-                    Log.e(TAG, "No se pudo inicializar AudioRecord. ¿Permiso faltante?")
-                }
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Permiso de audio denegado en background: ${e.message}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en hilo de monitoreo de audio: ${e.message}")
-            }
-        }
-        audioRecordThread?.start()
-    }
-
-    private fun stopAudioMonitoring() {
-        isMonitoringAudio = false
-        audioRecordThread = null
+        sensorManager?.unregisterListener(accelListener)
     }
 
     private fun triggerVibration() {
@@ -576,8 +509,6 @@ class BackgroundCameraService : LifecycleService() {
                     vibrator.vibrate(longArrayOf(0, 500, 200, 500), -1)
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) {}
     }
 }
