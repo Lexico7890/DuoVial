@@ -7,6 +7,9 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+  <uses-permission android:name="android.permission.CAMERA"/>
+  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <queries>
@@ -21,6 +24,10 @@
     <meta-data android:name="com.supersami.foregroundservice.notification_channel_description" android:value="Mantiene activa la dash cam"/>
     <service android:name="com.supersami.foregroundservice.ForegroundService" android:foregroundServiceType="dataSync|camera"></service>
     <service android:name="com.supersami.foregroundservice.ForegroundServiceTask" android:foregroundServiceType="dataSync|camera"></service>
+    <service
+        android:name=".BackgroundCameraService"
+        android:foregroundServiceType="camera|microphone"
+        android:exported="false" />
 
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>

@@ -31,16 +31,16 @@ export const RecordButton: React.FC<RecordButtonProps> = ({ isRecording, onToggl
         ]}
       >
         <MaterialCommunityIcons 
-          name={isRecording ? 'stop' : 'video'} 
+          name={isRecording ? 'alert-decagram' : 'video'} 
           size={50} 
           color="#000" 
           style={styles.icon}
         />
         <Text style={styles.text}>
-          {isRecording ? 'STOP' : 'START'}
+          {isRecording ? 'PÁNICO' : 'START'}
         </Text>
         <Text style={styles.subText}>
-          RECORDING
+          {isRecording ? 'REGISTRAR EVENTO' : 'VIGILANTE'}
         </Text>
       </TouchableOpacity>
     </View>
