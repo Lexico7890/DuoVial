@@ -48,11 +48,19 @@ import java.io.FileInputStream
 import java.io.OutputStream
 
 /**
- * Servicio en primer plano nativo de alto rendimiento re-calibrado con:
- * 1. Integración de la vista de Preview de CameraX en tiempo real.
- * 2. Emisión rate-limitada de valores del acelerómetro (200ms) para actualizar la UI en vivo.
- * 3. Estados específicos solicitados: "INICIANDO DUOVIAL", "DUOVIAL ACTIVO", "GENERANDO CONTENIDO POST EVENTO".
- * 4. Burbuja flotante (Overlay) interactiva y arrastrable sobre otras aplicaciones.
+ * Interfaz estática para comunicar telemetría y estado directamente entre el servicio nativo
+ * y el módulo de puente React Native sin retrasos ni bloqueos por restricciones de Android.
+ */
+interface CameraStatusListener {
+    fun onStatusChanged(status: String)
+    fun onAccelChanged(gForce: Double)
+}
+
+/**
+ * Servicio en primer plano nativo optimizado con:
+ * 1. Interface estática statusListener para garantizar la sincronización al 100% con JS.
+ * 2. Lógica de detención con autoguardado del buffer circular (sin grabar post-evento).
+ * 3. Acelerómetro Fuerza G rate-limitado y burbuja flotante PIP.
  */
 class BackgroundCameraService : LifecycleService() {
 
@@ -71,7 +79,10 @@ class BackgroundCameraService : LifecycleService() {
     private var shortSegmentSaving = false
     private var postEventRecordingActive = false
     private var isScenario1 = false
+    private var isStoppingService = false // Indica si la detención guarda y apaga
     private var eventTimestamp = 0L
+    private var cameraInitAttempts = 0
+    private val maxCameraInitAttempts = 3
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -88,12 +99,12 @@ class BackgroundCameraService : LifecycleService() {
     private var floatingBubbleView: View? = null
 
     companion object {
-        // Referencia estática del Preview de CameraX y la vista nativa activa para la UI de React Native
         var activePreview: Preview? = null
         var activePreviewView: PreviewView? = null
+        var statusListener: CameraStatusListener? = null
     }
 
-    // Runnable para la rotación automática del buffer cada 15 segundos
+    // Runnable para la rotación del buffer cada 15 segundos
     private val rotateRunnable = Runnable {
         Log.d(TAG, "Rotando buffer circular...")
         rotateCircularBuffer()
@@ -116,14 +127,14 @@ class BackgroundCameraService : LifecycleService() {
                 val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble())
                 val gForce = magnitude / SensorManager.GRAVITY_EARTH
                 
-                // 1. Emitir la Fuerza G en vivo a la UI JS rate-limitada a 200ms para evitar lags de puente
+                // Emitir Fuerza G rate-limitada a 200ms
                 val now = System.currentTimeMillis()
                 if (now - lastAccelUpdateTime > 200) {
                     lastAccelUpdateTime = now
-                    sendAccelUpdate(gForce)
+                    statusListener?.onAccelChanged(gForce)
                 }
 
-                // 2. Evaluar umbral de impacto > 2.5G
+                // Evaluar colisión > 2.5G
                 if (gForce > 2.5) {
                     triggerCollisionEvent("Acelerómetro Impacto Detectado: ${String.format("%.2f", gForce)} G")
                 }
@@ -147,10 +158,17 @@ class BackgroundCameraService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        Log.d(TAG, "Servicio iniciado...")
+        Log.d(TAG, "Servicio iniciado con action: ${intent?.action}")
         
-        if (intent != null && intent.action == "ACTION_TRIGGER_PANIC") {
-            triggerCollisionEvent("Botón de Pánico Manual o Burbuja")
+        if (intent != null) {
+            when (intent.action) {
+                "ACTION_TRIGGER_PANIC" -> {
+                    triggerCollisionEvent("Botón de Pánico Manual o Burbuja")
+                }
+                "ACTION_STOP_AND_SAVE" -> {
+                    stopAndSaveBuffer()
+                }
+            }
         }
         
         return START_STICKY
@@ -169,7 +187,7 @@ class BackgroundCameraService : LifecycleService() {
         activePreview = null
         
         cameraProvider?.unbindAll()
-        sendStatusUpdate("INACTIVO")
+        statusListener?.onStatusChanged("INACTIVO")
         super.onDestroy()
     }
 
@@ -178,30 +196,9 @@ class BackgroundCameraService : LifecycleService() {
         return null
     }
 
-    // ==========================================
-    // EMISIÓN DE EVENTOS Y TELEMETRÍA A JS
-    // ==========================================
-
     private fun sendStatusUpdate(status: String) {
-        try {
-            val intent = Intent("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED").apply {
-                putExtra("status", status)
-            }
-            sendBroadcast(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al enviar broadcast de estado: ${e.message}")
-        }
-    }
-
-    private fun sendAccelUpdate(gForce: Double) {
-        try {
-            val intent = Intent("com.anonymous.DuoVial.ACCEL_CHANGED").apply {
-                putExtra("gForce", gForce)
-            }
-            sendBroadcast(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al enviar broadcast de aceleración: ${e.message}")
-        }
+        statusListener?.onStatusChanged(status)
+        Log.d(TAG, "Estado actualizado: $status")
     }
 
     // ==========================================
@@ -249,6 +246,7 @@ class BackgroundCameraService : LifecycleService() {
     // ==========================================
 
     private fun startCameraX() {
+        Log.i(TAG, "Iniciando CameraX (Intento ${cameraInitAttempts + 1})...")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
@@ -260,18 +258,16 @@ class BackgroundCameraService : LifecycleService() {
                     
                 videoCapture = VideoCapture.withOutput(recorder)
                 
-                // 1. Crear el caso de uso del Preview para la UI
                 val preview = Preview.Builder().build()
                 activePreview = preview
                 
-                // Vincular SurfaceProvider si el PreviewView ya se encuentra montado en la UI
                 val activeView = activePreviewView
                 if (activeView != null) {
                     try {
                         preview.setSurfaceProvider(activeView.surfaceProvider)
-                        Log.d(TAG, "PreviewView montado previamente vinculado con éxito.")
+                        Log.d(TAG, "PreviewView vinculado con éxito en startCameraX.")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error al vincular vista existente: ${e.message}")
+                        Log.e(TAG, "Error al vincular vista: ${e.message}")
                     }
                 }
                 
@@ -281,15 +277,26 @@ class BackgroundCameraService : LifecycleService() {
                 cameraProvider?.bindToLifecycle(
                     this,
                     cameraSelector,
-                    preview, // Vincular Preview también
+                    preview,
                     videoCapture
                 )
                 
-                Log.d(TAG, "CameraX vinculada correctamente al servicio nativo.")
+                Log.d(TAG, "CameraX vinculada correctamente.")
+                cameraInitAttempts = 0 // Resetear intentos al tener éxito
                 startCircularBuffer()
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar CameraX: ${e.message}")
+                Log.e(TAG, "Error al iniciar CameraX en intento ${cameraInitAttempts + 1}: ${e.message}")
+                cameraInitAttempts++
+                if (cameraInitAttempts < maxCameraInitAttempts) {
+                    Log.w(TAG, "Reintentando inicialización de CameraX en 1.5 segundos...")
+                    handler.postDelayed({
+                        startCameraX()
+                    }, 1500)
+                } else {
+                    Log.e(TAG, "Se alcanzó el número máximo de intentos para iniciar CameraX. Pantalla negra permanente.")
+                    sendStatusUpdate("ERROR EN CÁMARA")
+                }
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -303,8 +310,8 @@ class BackgroundCameraService : LifecycleService() {
         postEventRecordingActive = false
         shortSegmentSaving = false
         isScenario1 = false
+        isStoppingService = false
         
-        // Al iniciar por primera vez
         sendStatusUpdate("INICIANDO DUOVIAL")
         startRecordingSegment(0)
     }
@@ -327,7 +334,12 @@ class BackgroundCameraService : LifecycleService() {
             val pendingRecording = videoCapture!!.output.prepareRecording(this, fileOutputOptions)
             
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
-                if (event is VideoRecordEvent.Finalize) {
+                if (event is VideoRecordEvent.Start) {
+                    Log.d(TAG, "Grabación de segmento_$index iniciada con éxito.")
+                    if (!isSavingEvent) {
+                        sendStatusUpdate("DUOVIAL ACTIVO")
+                    }
+                } else if (event is VideoRecordEvent.Finalize) {
                     onRecordingFinalized(event)
                 }
             }
@@ -348,8 +360,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
         if (!isSavingEvent) {
-            // El primer frame se completó con éxito, rotamos al segundo. 
-            // A partir de este momento pasamos al estado de vigilancia activa estable.
+            // El primer frame se completó con éxito, pasamos a vigilancia activa estable.
             sendStatusUpdate("DUOVIAL ACTIVO")
             
             val nextIndex = 1 - currentRecordingIndex
@@ -365,10 +376,11 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     // ==========================================
-    // LÓGICA DE DETECCIÓN Y GUARDADO DE EVENTO
+    // LÓGICA DE DETECCIÓN Y GUARDADO DE EVENTO / PARADA
     // ==========================================
 
     private fun triggerCollisionEvent(reason: String) {
+        if (isStoppingService) return
         val now = System.currentTimeMillis()
         if (now - lastEventTriggerTime < 12000) {
             return
@@ -397,7 +409,6 @@ class BackgroundCameraService : LifecycleService() {
         
         if (!hasCompletedPrevFile) {
             // ESCENARIO 1: Ocurre antes de completarse el primer frame
-            Log.d(TAG, "ESCENARIO 1 activo: Sin frame previo completo. Guardando segmento actual parcial.")
             isScenario1 = true
             shortSegmentSaving = true
             sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
@@ -406,14 +417,10 @@ class BackgroundCameraService : LifecycleService() {
             // ESCENARIO 2: Existe un frame previo completo
             isScenario1 = false
             if (duration < 14000) {
-                // Buffer corto
-                Log.d(TAG, "ESCENARIO 2 activo (Buffer Corto < 14s). Guardando previo + actual parcial.")
                 shortSegmentSaving = true
                 sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
                 currentActiveRecording?.stop()
             } else {
-                // Buffer largo
-                Log.d(TAG, "ESCENARIO 2 activo (Buffer Largo >= 14s). Guardando segmento actual completo.")
                 shortSegmentSaving = false
                 sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
                 currentActiveRecording?.stop()
@@ -421,38 +428,79 @@ class BackgroundCameraService : LifecycleService() {
         }
     }
 
+    /**
+     * Gatilla el apagado seguro de la app guardando el buffer circular
+     * de pre-evento actual pero SIN iniciar la grabación de los 15s post-evento.
+     */
+    private fun stopAndSaveBuffer() {
+        if (isSavingEvent || isStoppingService) return
+        Log.i(TAG, "Deteniendo Vigilante. Guardando buffer actual y apagando...")
+        
+        stopCircularBufferTimers()
+        eventTimestamp = System.currentTimeMillis() / 1000
+        
+        isSavingEvent = true
+        isStoppingService = true
+        postEventRecordingActive = false
+        
+        val duration = System.currentTimeMillis() - recordingStartTime
+        
+        val prevIndex = 1 - currentRecordingIndex
+        val prevFile = File(cacheDir, "segment_$prevIndex.mp4")
+        val hasCompletedPrevFile = prevFile.exists() && prevFile.length() > 500000L
+        
+        if (!hasCompletedPrevFile) {
+            isScenario1 = true
+            shortSegmentSaving = true
+        } else {
+            isScenario1 = false
+            shortSegmentSaving = duration < 14000
+        }
+        
+        sendStatusUpdate("INICIANDO DUOVIAL") // Mostrar animación de guardado final
+        currentActiveRecording?.stop()
+    }
+
     private fun handleEventSaveTransition() {
+        if (isStoppingService) {
+            // Caso de detención de la app: Copiar únicamente el buffer de pre-evento
+            savePreEventSegments()
+            Log.i(TAG, "✅ Vigilante apagado de forma segura y buffer circular guardado. Apagando servicio.")
+            stopSelf() // Detiene el servicio nativo inmediatamente
+            return
+        }
+
         if (!postEventRecordingActive) {
-            if (isScenario1) {
-                copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
-            } else {
-                if (shortSegmentSaving) {
-                    val prevIndex = 1 - currentRecordingIndex
-                    copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
-                    copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part1.mp4")
-                } else {
-                    copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
-                }
-            }
-            
+            // Lógica normal de evento: Guardar pre-evento y empezar post-evento
+            savePreEventSegments()
             postEventRecordingActive = true
             startPostEventRecording()
         } else {
-            val finalPartIndex = if (isScenario1) {
-                1
-            } else {
-                if (shortSegmentSaving) 2 else 1
-            }
-            
+            // Fin de la grabación de post-evento normal
+            val finalPartIndex = if (isScenario1) 1 else (if (shortSegmentSaving) 2 else 1)
             copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_part$finalPartIndex.mp4")
             
             Log.i(TAG, "✅ Incidente guardado con éxito. Reanudando buffer circular...")
+            sendStatusUpdate("DUOVIAL ACTIVO")
             
             val postFile = File(cacheDir, "segment_post.mp4")
             if (postFile.exists()) postFile.delete()
             
-            // Reanudar buffer circular volviendo a DUOVIAL ACTIVO
             startCircularBuffer()
+        }
+    }
+
+    private fun savePreEventSegments() {
+        if (isScenario1) {
+            copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+        } else {
+            if (shortSegmentSaving) {
+                val prevIndex = 1 - currentRecordingIndex
+                copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+                copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part1.mp4")
+            } else {
+                copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+            }
         }
     }
 
@@ -555,7 +603,7 @@ class BackgroundCameraService : LifecycleService() {
             
             if (accelSensor != null) {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                Log.d(TAG, "Acelerómetro registrado y activo.")
+                Log.d(TAG, "Acelerómetro registrado.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error al registrar acelerómetro: ${e.message}")
@@ -575,9 +623,8 @@ class BackgroundCameraService : LifecycleService() {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
             
             val density = resources.displayMetrics.density
-            val size = (60 * density).toInt() // Sleek circular size
+            val size = (60 * density).toInt()
             
-            // Programar LayoutParams del overlay flotante
             val layoutParams = WindowManager.LayoutParams(
                 size,
                 size,
@@ -589,33 +636,29 @@ class BackgroundCameraService : LifecycleService() {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = (resources.displayMetrics.widthPixels - size - (20 * density).toInt()) // Posición lateral inicial
+                x = (resources.displayMetrics.widthPixels - size - (20 * density).toInt())
                 y = (150 * density).toInt()
             }
             
-            // Crear el layout contenedor de la burbuja
             val bubble = FrameLayout(this)
             
-            // Diseñar el círculo en código usando GradientDrawable (cero dependencias extras, 100% estable)
             val shape = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#FF2A55")) // Rojo Neón de DuoVial
-                setStroke((2.5 * density).toInt(), Color.parseColor("#FFFFFF")) // Borde blanco
+                setColor(Color.parseColor("#FFCC00")) // Cambiado a AMARILLO de acuerdo a la nueva interfaz
+                setStroke((2.5 * density).toInt(), Color.parseColor("#FFFFFF"))
             }
             bubble.background = shape
             
-            // Colocar un icono representativo de cámara nativo dentro de la burbuja
             val icon = ImageView(this).apply {
                 val padding = (16 * density).toInt()
                 setPadding(padding, padding, padding, padding)
-                setImageResource(android.R.drawable.presence_video_online) // Icono nativo de punto de grabación
-                setColorFilter(Color.WHITE)
+                setImageResource(android.R.drawable.presence_video_online)
+                setColorFilter(Color.BLACK) // Icono en negro para contrastar con amarillo
             }
             bubble.addView(icon)
             
             floatingBubbleView = bubble
             
-            // Lógica de arrastre (Draggable) y Click
             bubble.setOnTouchListener(object : View.OnTouchListener {
                 private var initialX = 0
                 private var initialY = 0
@@ -635,7 +678,6 @@ class BackgroundCameraService : LifecycleService() {
                         }
                         MotionEvent.ACTION_UP -> {
                             if (isClick) {
-                                // Vibrar e indicar que fue gatillado
                                 triggerVibration()
                                 triggerCollisionEvent("Burbuja Flotante Manual")
                             }
@@ -645,7 +687,6 @@ class BackgroundCameraService : LifecycleService() {
                             val dx = (event.rawX - initialTouchX).toInt()
                             val dy = (event.rawY - initialTouchY).toInt()
                             
-                            // Tolerancia para discernir movimiento de click
                             if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
                                 isClick = false
                             }
@@ -656,7 +697,7 @@ class BackgroundCameraService : LifecycleService() {
                             try {
                                 windowManager?.updateViewLayout(bubble, layoutParams)
                             } catch (e: Exception) {
-                                Log.e(TAG, "Error al actualizar posición de burbuja: ${e.message}")
+                                Log.e(TAG, "Error al actualizar burbuja: ${e.message}")
                             }
                             return true
                         }
@@ -666,7 +707,7 @@ class BackgroundCameraService : LifecycleService() {
             })
             
             windowManager?.addView(bubble, layoutParams)
-            Log.i(TAG, "Burbuja flotante activa y dibujada con éxito.")
+            Log.i(TAG, "Burbuja flotante activa.")
             
         } catch (e: Exception) {
             Log.e(TAG, "Error al crear la burbuja flotante: ${e.message}")
@@ -678,7 +719,6 @@ class BackgroundCameraService : LifecycleService() {
             try {
                 windowManager?.removeView(floatingBubbleView)
                 floatingBubbleView = null
-                Log.d(TAG, "Burbuja flotante removida con éxito.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error al remover burbuja flotante: ${e.message}")
             }

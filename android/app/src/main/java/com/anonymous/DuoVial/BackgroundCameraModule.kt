@@ -1,9 +1,7 @@
 package com.anonymous.DuoVial
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -17,48 +15,26 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
  * Módulo puente nativo de alto rendimiento que:
- * 1. Transmite transiciones de estado nativas a React Native JS.
- * 2. Transmite telemetría del acelerómetro en tiempo real rate-limitada para evitar lags en el JS bridge.
- * 3. Expone control de arranque, parada y pánico.
- * 4. Expone la solicitud interactiva de permisos de burbuja flotante (Draw Overlays).
+ * 1. Transmite transiciones de estado nativas a React Native JS mediante interface estática.
+ * 2. Transmite telemetría del acelerómetro en tiempo real rate-limitada para evitar lags.
+ * 3. Implementa arranque, detención con guardado (ACTION_STOP_AND_SAVE) y pánico.
+ * 4. Expone la solicitud interactiva de permisos de burbuja flotante.
  */
 class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     private val TAG = "DuoVial_CameraModule"
 
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent != null) {
-                when (intent.action) {
-                    "com.anonymous.DuoVial.CAMERA_STATUS_CHANGED" -> {
-                        val status = intent.getStringExtra("status") ?: "INACTIVO"
-                        sendStatusEventToJS(status)
-                    }
-                    "com.anonymous.DuoVial.ACCEL_CHANGED" -> {
-                        val gForce = intent.getDoubleExtra("gForce", 1.0)
-                        sendAccelEventToJS(gForce)
-                    }
-                }
-            }
-        }
-    }
-
     init {
-        // Registrar el local receiver para escuchar el estado del servicio y acelerómetro nativos
-        val filter = IntentFilter().apply {
-            addAction("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED")
-            addAction("com.anonymous.DuoVial.ACCEL_CHANGED")
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                reactContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                reactContext.registerReceiver(receiver, filter)
+        // Registrar el statusListener estático para una comunicación 100% fiable
+        BackgroundCameraService.statusListener = object : CameraStatusListener {
+            override fun onStatusChanged(status: String) {
+                sendStatusEventToJS(status)
             }
-            Log.d(TAG, "BroadcastReceiver registrado para escuchar estado y aceleración.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al registrar BroadcastReceiver: ${e.message}")
+            override fun onAccelChanged(gForce: Double) {
+                sendAccelEventToJS(gForce)
+            }
         }
+        Log.d(TAG, "statusListener estático vinculado con éxito.")
     }
 
     override fun getName(): String {
@@ -67,12 +43,8 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
 
     override fun onCatalystInstanceDestroy() {
         super.onCatalystInstanceDestroy()
-        try {
-            reactApplicationContext.unregisterReceiver(receiver)
-            Log.d(TAG, "BroadcastReceiver desregistrado con éxito.")
-        } catch (e: Exception) {
-            // Ya desregistrado
-        }
+        BackgroundCameraService.statusListener = null
+        Log.d(TAG, "statusListener estático desvinculado con éxito.")
     }
 
     private fun sendStatusEventToJS(status: String) {
@@ -116,12 +88,15 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
 
     @ReactMethod
     fun stopRecording() {
-        Log.d(TAG, "Deteniendo grabación desde JS...")
+        Log.d(TAG, "Deteniendo grabación desde JS con guardado seguro...")
         val context = reactApplicationContext
-        val intent = Intent(context, BackgroundCameraService::class.java)
+        // En lugar de matar el servicio directamente, enviamos el intent ACTION_STOP_AND_SAVE
+        // para que guarde el buffer circular actual de pre-evento y luego se apague él mismo.
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = "ACTION_STOP_AND_SAVE"
+        }
         try {
-            context.stopService(intent)
-            sendStatusEventToJS("INACTIVO")
+            ContextCompat.startForegroundService(context, intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error al detener el servicio de cámara nativo: ${e.message}")
         }

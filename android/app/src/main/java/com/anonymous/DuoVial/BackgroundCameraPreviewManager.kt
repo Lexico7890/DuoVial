@@ -25,20 +25,31 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
         // Guardar referencia en el servicio para vinculación bidireccional
         BackgroundCameraService.activePreviewView = previewView
         
-        // Si el servicio ya está corriendo y el preview de CameraX ya existe, vincular de inmediato
-        val preview = BackgroundCameraService.activePreview
-        if (preview != null) {
-            try {
-                preview.setSurfaceProvider(previewView.surfaceProvider)
-                Log.i(TAG, "Viculación exitosa de PreviewView con el servicio de cámara activo.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error al vincular SurfaceProvider en createViewInstance: ${e.message}")
-            }
-        } else {
-            Log.d(TAG, "Aún no hay servicio de cámara activo para vincular el preview.")
-        }
+        // Intentar vincular de inmediato y programar reintentos en el hilo principal
+        bindPreviewWithRetry(previewView, 0)
         
         return previewView
+    }
+
+    private fun bindPreviewWithRetry(previewView: PreviewView, attempt: Int) {
+        val preview = BackgroundCameraService.activePreview
+        if (preview != null) {
+            previewView.post {
+                try {
+                    preview.setSurfaceProvider(previewView.surfaceProvider)
+                    Log.i(TAG, "Vinculación exitosa de PreviewView (Intento $attempt)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error al vincular SurfaceProvider en intento $attempt: ${e.message}")
+                }
+            }
+        } else if (attempt < 6) {
+            // Reintentar en 500ms si el servicio de cámara aún está iniciando
+            previewView.postDelayed({
+                bindPreviewWithRetry(previewView, attempt + 1)
+            }, 500)
+        } else {
+            Log.w(TAG, "Se superó el límite de reintentos para vincular el preview.")
+        }
     }
 
     override fun onDropViewInstance(view: PreviewView) {

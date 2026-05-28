@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter } from 'react-native';
+import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
 import { RecordButton } from './src/components/RecordButton';
@@ -17,30 +17,39 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('Monitor');
   const [status, setStatus] = useState('INACTIVO');
   const [gForce, setGForce] = useState(1.00);
+  
+  // Estado para el control estricto de permisos y evitar la pantalla negra de primer inicio
+  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
 
   const isRecording = status !== 'INACTIVO';
-  const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO') || status.includes('GENERANDO');
+  const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO') || status.includes('GENERANDO') || status === 'INICIANDO DUOVIAL';
+
+  // Función para solicitar permisos de forma segura
+  const requestInitialPermissions = async () => {
+    if (Platform.OS === 'android') {
+      const permissions = [
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+      ];
+
+      if (Platform.Version >= 33) {
+        permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
+
+      try {
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        const cameraGranted = results[PermissionsAndroid.PERMISSIONS.CAMERA] === PermissionsAndroid.RESULTS.GRANTED;
+        setHasCameraPermission(cameraGranted);
+      } catch (err) {
+        console.warn('Error al solicitar permisos al inicio:', err);
+        setHasCameraPermission(false);
+      }
+    } else {
+      setHasCameraPermission(true);
+    }
+  };
 
   // Solicitar permisos nativos al iniciar la app
   useEffect(() => {
-    const requestInitialPermissions = async () => {
-      if (Platform.OS === 'android') {
-        const permissions = [
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-        ];
-
-        if (Platform.Version >= 33) {
-          permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-        }
-
-        try {
-          await PermissionsAndroid.requestMultiple(permissions);
-        } catch (err) {
-          console.warn('Error al solicitar permisos al inicio:', err);
-        }
-      }
-    };
-
     requestInitialPermissions();
   }, []);
 
@@ -63,19 +72,26 @@ export default function App() {
     };
   }, []);
 
-  const handleToggle = async () => {
-    if (isSaving) return;
+  const handleToggle = () => {
+    if (isSaving || !isRecording) return;
+    console.log('Gatillando pánico manual...');
+    BackgroundGuard.triggerPanic();
+  };
 
-    if (isRecording) {
-      console.log('Gatillando pánico manual...');
-      BackgroundGuard.triggerPanic();
-    } else {
-      await BackgroundGuard.startGuarding();
+  const handleStart = async () => {
+    if (isSaving || isRecording) return;
+    
+    // Verificar permisos antes de encender para evitar pantalla negra
+    if (!hasCameraPermission) {
+      await requestInitialPermissions();
+      return;
     }
+    
+    await BackgroundGuard.startGuarding();
   };
 
   const handleStop = async () => {
-    if (isSaving) return;
+    if (isSaving || !isRecording) return;
     await BackgroundGuard.stopGuarding();
   };
 
@@ -116,13 +132,32 @@ export default function App() {
         <View style={styles.statusBadgeContainer}>
           <View style={[styles.statusDot, { backgroundColor: getStatusColor(status) }]} />
           <Text style={[styles.statusBadgeText, { color: colors.textPrimary }]}>
-            {status === 'INACTIVO' ? 'Tap START to begin recording' : status}
+            {status === 'INACTIVO' ? 'VIGILANTE APAGADO - TOCA ENCENDER' : status}
           </Text>
         </View>
 
         {/* Cámara Preview Recuadro (Road Scan Viewport) */}
         <View style={[styles.previewContainer, isRecording && styles.previewContainerActive]}>
-          {isRecording ? (
+          {hasCameraPermission === false ? (
+            <View style={styles.permissionCard}>
+              <MaterialCommunityIcons name="shield-lock-outline" size={40} color="#FF9F0A" />
+              <Text style={styles.permissionTitle}>Permiso de Cámara Requerido</Text>
+              <Text style={styles.permissionDesc}>
+                DuoVial necesita acceso a la cámara trasera para poder funcionar como DashCam.
+              </Text>
+              <TouchableOpacity 
+                activeOpacity={0.8}
+                onPress={requestInitialPermissions}
+                style={styles.permissionBtn}
+              >
+                <Text style={styles.permissionBtnText}>OTORGAR ACCESO</Text>
+              </TouchableOpacity>
+            </View>
+          ) : hasCameraPermission === null ? (
+            <View style={styles.previewStandby}>
+              <ActivityIndicator size="large" color={colors.neonGreen} />
+            </View>
+          ) : isRecording ? (
             <View style={styles.previewViewport}>
               <BackgroundCameraPreview style={StyleSheet.absoluteFill} />
               {/* Indicador de grabación REC parpadeante */}
@@ -135,27 +170,58 @@ export default function App() {
             <View style={styles.previewStandby}>
               <MaterialCommunityIcons name="video-off-outline" size={48} color={colors.textSecondary} />
               <Text style={styles.previewStandbyText}>MONITOR STANDBY</Text>
-              <Text style={styles.previewStandbySubtext}>Inicia el vigilante para habilitar el Road Scan</Text>
+              <Text style={styles.previewStandbySubtext}>Enciende el vigilante para habilitar el Road Scan</Text>
             </View>
           )}
         </View>
 
-        {/* Controles de grabación */}
+        {/* Controles de grabación (Burbuja Izquierda, Pánico Central Amarillo, Vigilante Derecho Verde/Rojo) */}
         <View style={styles.controlsContainer}>
-          <RecordButton isRecording={isRecording} onToggle={handleToggle} disabled={isSaving} />
-          
-          {isRecording && (
+          <View style={styles.controlsRow}>
+            {/* Botón de Burbuja Flotante PIP (Izquierda) */}
             <TouchableOpacity 
               activeOpacity={0.8}
-              onPress={handleStop}
+              onPress={() => BackgroundGuard.requestOverlayPermission()}
               disabled={isSaving}
-              style={[styles.stopButton, isSaving && styles.stopButtonDisabled]}
+              style={[
+                styles.burbujaButton,
+                isSaving && styles.burbujaButtonDisabled
+              ]}
             >
-              <Text style={[styles.stopButtonText, isSaving && { color: colors.textSecondary }]}>
-                DETENER VIGILANTE
+              <MaterialCommunityIcons 
+                name="window-restore" 
+                size={22} 
+                color="#FF9F0A" 
+              />
+              <Text style={styles.burbujaButtonText}>
+                BURBUJA
               </Text>
             </TouchableOpacity>
-          )}
+
+            {/* Botón Circular Central Amarillo: Solo PÁNICO */}
+            <RecordButton isRecording={isRecording} onToggle={handleToggle} disabled={isSaving} />
+            
+            {/* Botón de Encendido/Apagado del Vigilante (Verde/Rojo) */}
+            <TouchableOpacity 
+              activeOpacity={0.8}
+              onPress={isRecording ? handleStop : handleStart}
+              disabled={isSaving}
+              style={[
+                styles.powerButton,
+                { backgroundColor: isRecording ? colors.neonRed : colors.neonGreen },
+                isSaving && styles.powerButtonDisabled
+              ]}
+            >
+              <MaterialCommunityIcons 
+                name={isRecording ? "stop" : "play"} 
+                size={24} 
+                color="#000" 
+              />
+              <Text style={styles.powerButtonText}>
+                {isRecording ? 'APAGAR' : 'ENCENDER'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -202,6 +268,20 @@ export default function App() {
             <Text style={styles.settingDescription}>
               Habilita un botón flotante arrastrable que permanece visible sobre otras aplicaciones (Maps, Spotify, etc.) para que puedas registrar incidentes instantáneamente.
             </Text>
+            
+            {/* Mensaje de desbloqueo de Android Restricted Settings (Seguridad APK) */}
+            <View style={styles.restrictedAlert}>
+              <MaterialCommunityIcons name="alert-circle-outline" size={20} color="#FF9F0A" style={{ marginRight: 8, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.restrictedAlertTitle}>¿Bloqueado por seguridad de Android?</Text>
+                <Text style={styles.restrictedAlertText}>
+                  Si el sistema te niega el acceso por "ajustes restringidos" (común al instalar APKs), ve a: {'\n'}
+                  <Text style={{ fontWeight: 'bold' }}>Ajustes del Teléfono ➡️ Aplicaciones ➡️ DuoVial ➡️ Tres puntos (esquina superior derecha) ➡️ Permitir ajustes restringidos</Text>. {'\n'}
+                  Luego regresa aquí y autoriza la burbuja flotante.
+                </Text>
+              </View>
+            </View>
+
             <TouchableOpacity 
               activeOpacity={0.8}
               onPress={() => BackgroundGuard.requestOverlayPermission()}
@@ -478,11 +558,110 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
-  // --- CONTROLS ---
+  // --- PERMISSION CARD ---
+  permissionCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 30,
+    backgroundColor: 'rgba(18, 24, 27, 0.95)',
+  },
+  permissionTitle: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 10,
+    letterSpacing: 0.5,
+  },
+  permissionDesc: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 16,
+  },
+  permissionBtn: {
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    borderWidth: 1.5,
+    borderColor: '#FFD700',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    marginTop: 15,
+  },
+  permissionBtnText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  // --- CONTROLS ROW ---
   controlsContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  burbujaButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 159, 10, 0.12)',
+    borderWidth: 1.5,
+    borderColor: '#FF9F0A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    elevation: 6,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowColor: '#FF9F0A',
+  },
+  burbujaButtonDisabled: {
+    borderColor: colors.border,
+    backgroundColor: 'rgba(30, 41, 59, 0.1)',
+    shadowOpacity: 0,
+    elevation: 0,
+    opacity: 0.4,
+  },
+  burbujaButtonText: {
+    color: '#FF9F0A',
+    fontSize: 7.5,
+    fontWeight: '900',
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  powerButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+    elevation: 6,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    shadowColor: '#000',
+  },
+  powerButtonDisabled: {
+    backgroundColor: colors.border,
+    opacity: 0.4,
+    elevation: 0,
+  },
+  powerButtonText: {
+    color: '#000',
+    fontSize: 7.5,
+    fontWeight: '900',
+    marginTop: 2,
+    letterSpacing: 0.5,
   },
   stopButton: {
     marginTop: 15,
@@ -560,6 +739,27 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 11,
     lineHeight: 18,
+  },
+  restrictedAlert: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 159, 10, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 159, 10, 0.25)',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+  },
+  restrictedAlertTitle: {
+    color: '#FF9F0A',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  restrictedAlertText: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 15,
   },
   actionButton: {
     backgroundColor: 'rgba(255, 159, 10, 0.1)',
