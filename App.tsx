@@ -5,20 +5,23 @@ import { SystemHeader } from './src/components/SystemHeader';
 import { RecordButton } from './src/components/RecordButton';
 import { StatusCard } from './src/components/StatusCard';
 import { BottomNav } from './src/components/BottomNav';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { requireNativeComponent } from 'react-native';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
 
+// Cargar el componente de Preview nativo expuesto por Kotlin
+const BackgroundCameraPreview = requireNativeComponent('BackgroundCameraPreview');
+
 export default function App() {
-  // Estado que refleja el estado nativo real de la cámara
+  const [activeTab, setActiveTab] = useState('Monitor');
   const [status, setStatus] = useState('INACTIVO');
+  const [gForce, setGForce] = useState(1.00);
 
-  // Sincronizar isRecording con el estado del servicio nativo
   const isRecording = status !== 'INACTIVO';
+  const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO') || status.includes('GENERANDO');
 
-  // Bloquear acciones del usuario mientras se procesa/graba un incidente
-  const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO');
-
-  // Solicitud transparente de permisos (Cámara y Notificaciones, Acelerómetro no requiere permiso runtime)
+  // Solicitar permisos nativos al iniciar la app
   useEffect(() => {
     const requestInitialPermissions = async () => {
       if (Platform.OS === 'android') {
@@ -26,14 +29,12 @@ export default function App() {
           PermissionsAndroid.PERMISSIONS.CAMERA,
         ];
 
-        // Notificaciones necesarias para Android 13+ (API 33+)
         if (Platform.Version >= 33) {
           permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
         }
 
         try {
-          const results = await PermissionsAndroid.requestMultiple(permissions);
-          console.log('Permisos solicitados al arrancar:', results);
+          await PermissionsAndroid.requestMultiple(permissions);
         } catch (err) {
           console.warn('Error al solicitar permisos al inicio:', err);
         }
@@ -43,46 +44,193 @@ export default function App() {
     requestInitialPermissions();
   }, []);
 
-  // Escuchar estados nativos reales del servicio mediante DeviceEventEmitter
+  // Escuchar eventos nativos en tiempo real desde el servicio en Kotlin
   useEffect(() => {
-    const subscription = DeviceEventEmitter.addListener('onCameraStatusChanged', (event) => {
-      console.log('Estado de la cámara recibido en JS:', event.status);
+    // 1. Cambios de estado del buffer / grabación
+    const statusSubscription = DeviceEventEmitter.addListener('onCameraStatusChanged', (event) => {
+      console.log('JS: Estado de cámara recibido:', event.status);
       setStatus(event.status);
     });
 
+    // 2. Fuerza G en tiempo real rate-limitada a 200ms
+    const accelSubscription = DeviceEventEmitter.addListener('onAccelChanged', (event) => {
+      setGForce(event.gForce);
+    });
+
     return () => {
-      subscription.remove();
+      statusSubscription.remove();
+      accelSubscription.remove();
     };
   }, []);
 
   const handleToggle = async () => {
-    if (isSaving) return; // Bloquear clicks adicionales si está guardando
+    if (isSaving) return;
 
     if (isRecording) {
-      // Si ya está grabando, presionar el botón central dispara PÁNICO manualmente
-      console.log('Botón central presionado durante grabación: Gatillando pánico manual...');
+      console.log('Gatillando pánico manual...');
       BackgroundGuard.triggerPanic();
     } else {
-      // Si no estaba grabando, iniciar el servicio nativo
       await BackgroundGuard.startGuarding();
     }
   };
 
   const handleStop = async () => {
-    if (isSaving) return; // Bloquear detención si está guardando un incidente crítico
+    if (isSaving) return;
     await BackgroundGuard.stopGuarding();
   };
 
-  // Retorna color armónico dependiendo del estado del servicio
   const getStatusColor = (currentStatus: string) => {
     switch (currentStatus) {
       case 'INACTIVO':
         return colors.textSecondary;
-      case 'VIGILANDO':
+      case 'DUOVIAL ACTIVO':
         return colors.neonGreen;
-      default: // GUARDANDO PRE-EVENTO, GRABANDO POST-EVENTO, etc.
-        return '#FF9F0A'; // Ámbar Neón de precaución
+      default: // INICIANDO DUOVIAL, GENERANDO CONTENIDO POST EVENTO, etc.
+        return '#FF9F0A'; // Ámbar
     }
+  };
+
+  // ==========================================
+  // RENDER PESTAÑA: MONITOR (DASHBOARD)
+  // ==========================================
+  const renderMonitor = () => {
+    return (
+      <View style={styles.tabContent}>
+        {/* Telemetry Dashboard Card (G-Force & Speedometer) */}
+        <View style={styles.telemetryCard}>
+          <View style={styles.telemetryItem}>
+            <Text style={styles.telemetryValue}>0</Text>
+            <Text style={styles.telemetryLabel}>MPH</Text>
+          </View>
+          <View style={styles.telemetryDivider} />
+          <View style={styles.telemetryItemRight}>
+            <Text style={styles.telemetryLabelUpper}>GRAVITATIONAL FORCE</Text>
+            <View style={styles.gForceValueContainer}>
+              <Text style={styles.gForceValue}>{gForce.toFixed(2)}G</Text>
+              <Text style={styles.gForceThreshold}>/ 2.5 threshold</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Caja de texto informativa de estado en tiempo real */}
+        <View style={styles.statusBadgeContainer}>
+          <View style={[styles.statusDot, { backgroundColor: getStatusColor(status) }]} />
+          <Text style={[styles.statusBadgeText, { color: colors.textPrimary }]}>
+            {status === 'INACTIVO' ? 'Tap START to begin recording' : status}
+          </Text>
+        </View>
+
+        {/* Cámara Preview Recuadro (Road Scan Viewport) */}
+        <View style={[styles.previewContainer, isRecording && styles.previewContainerActive]}>
+          {isRecording ? (
+            <View style={styles.previewViewport}>
+              <BackgroundCameraPreview style={StyleSheet.absoluteFill} />
+              {/* Indicador de grabación REC parpadeante */}
+              <View style={styles.recBadge}>
+                <View style={styles.recDot} />
+                <Text style={styles.recBadgeText}>REC</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.previewStandby}>
+              <MaterialCommunityIcons name="video-off-outline" size={48} color={colors.textSecondary} />
+              <Text style={styles.previewStandbyText}>MONITOR STANDBY</Text>
+              <Text style={styles.previewStandbySubtext}>Inicia el vigilante para habilitar el Road Scan</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Controles de grabación */}
+        <View style={styles.controlsContainer}>
+          <RecordButton isRecording={isRecording} onToggle={handleToggle} disabled={isSaving} />
+          
+          {isRecording && (
+            <TouchableOpacity 
+              activeOpacity={0.8}
+              onPress={handleStop}
+              disabled={isSaving}
+              style={[styles.stopButton, isSaving && styles.stopButtonDisabled]}
+            >
+              <Text style={[styles.stopButtonText, isSaving && { color: colors.textSecondary }]}>
+                DETENER VIGILANTE
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  // ==========================================
+  // RENDER PESTAÑA: EVENTOS (GALERÍA CLIPS)
+  // ==========================================
+  const renderEventos = () => {
+    return (
+      <View style={styles.tabContent}>
+        <View style={styles.headerSpacer}>
+          <Text style={styles.tabTitle}>Incidentes Guardados</Text>
+          <Text style={styles.tabSubtitle}>Videos grabados automáticamente en /Downloads/DuoVial</Text>
+        </View>
+        
+        <View style={styles.emptyGalleryContainer}>
+          <MaterialCommunityIcons name="folder-video" size={60} color={colors.textSecondary} />
+          <Text style={styles.emptyGalleryText}>Galería Lista</Text>
+          <Text style={styles.emptyGallerySubtext}>Los videos guardados por pánico o colisiones se sincronizan en tu almacenamiento de descargas público.</Text>
+        </View>
+      </View>
+    );
+  };
+
+  // ==========================================
+  // RENDER PESTAÑA: AJUSTES (SENSORES & PIP)
+  // ==========================================
+  const renderAjustes = () => {
+    return (
+      <View style={styles.tabContent}>
+        <View style={styles.headerSpacer}>
+          <Text style={styles.tabTitle}>Configuración</Text>
+          <Text style={styles.tabSubtitle}>Calibración fina y herramientas avanzadas de DuoVial</Text>
+        </View>
+
+        <View style={styles.settingsList}>
+          {/* Ajuste de Burbuja Flotante PIP */}
+          <View style={styles.settingCard}>
+            <View style={styles.settingHeader}>
+              <MaterialCommunityIcons name="checkbox-blank-circle-outline" size={24} color="#FF9F0A" />
+              <Text style={styles.settingTitle}>Burbuja Flotante de Pánico</Text>
+            </View>
+            <Text style={styles.settingDescription}>
+              Habilita un botón flotante arrastrable que permanece visible sobre otras aplicaciones (Maps, Spotify, etc.) para que puedas registrar incidentes instantáneamente.
+            </Text>
+            <TouchableOpacity 
+              activeOpacity={0.8}
+              onPress={() => BackgroundGuard.requestOverlayPermission()}
+              style={styles.actionButton}
+            >
+              <Text style={styles.actionButtonText}>AUTORIZAR BURBUJA FLOTANTE</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Ajuste de Sensibilidad G-Force */}
+          <View style={styles.settingCard}>
+            <View style={styles.settingHeader}>
+              <MaterialCommunityIcons name="axis-arrow" size={24} color={colors.neonGreen} />
+              <Text style={styles.settingTitle}>Sensibilidad del Acelerómetro</Text>
+            </View>
+            <Text style={styles.settingDescription}>
+              El umbral actual es de 2.5G (fijado nativamente para colisiones violentas y evitar falsos positivos).
+            </Text>
+            <View style={styles.mockSliderContainer}>
+              <View style={styles.mockSliderBg}>
+                <View style={styles.mockSliderProgress} />
+                <View style={styles.mockSliderKnob} />
+              </View>
+              <Text style={styles.sliderLabel}>2.5G (Recomendado)</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
   };
 
   return (
@@ -92,63 +240,55 @@ export default function App() {
         {/* Header Section */}
         <SystemHeader />
 
-        {/* Main Recording Area */}
-        <View style={styles.recordContainer}>
-          {/* Caja de texto informativa de estado en tiempo real (Premium Glassmorphism) */}
-          <View style={[styles.statusBox, { borderColor: getStatusColor(status) + '33' }]}>
-            <View style={[styles.statusDot, { backgroundColor: getStatusColor(status) }]} />
-            <Text style={[styles.statusBoxText, { color: getStatusColor(status) }]}>
-              {status === 'INACTIVO' ? 'SISTEMA LISTO - INACTIVO' : status}
+        {/* Render Tab Dinámico */}
+        {activeTab === 'Monitor' && renderMonitor()}
+        {activeTab === 'Eventos' && renderEventos()}
+        {activeTab === 'Ajustes' && renderAjustes()}
+
+        {/* Barra de Navegación del Menú Principal */}
+        <View style={styles.bottomNavContainer}>
+          <TouchableOpacity 
+            style={styles.navTab}
+            onPress={() => setActiveTab('Monitor')}
+          >
+            <MaterialCommunityIcons 
+              name="view-dashboard-outline" 
+              size={24} 
+              color={activeTab === 'Monitor' ? colors.neonGreen : colors.textSecondary} 
+            />
+            <Text style={[styles.navLabel, { color: activeTab === 'Monitor' ? colors.neonGreen : colors.textSecondary }]}>
+              Monitor
             </Text>
-          </View>
-
-          <RecordButton isRecording={isRecording} onToggle={handleToggle} disabled={isSaving} />
+          </TouchableOpacity>
           
-          {isRecording && (
-            <TouchableOpacity 
-              activeOpacity={0.8}
-              onPress={handleStop}
-              disabled={isSaving}
-              style={[
-                styles.stopButton, 
-                isSaving && styles.stopButtonDisabled
-              ]}
-            >
-              <Text style={[
-                styles.stopButtonText,
-                isSaving && { color: colors.textSecondary }
-              ]}>
-                DETENER VIGILANTE
-              </Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity 
+            style={styles.navTab}
+            onPress={() => setActiveTab('Eventos')}
+          >
+            <MaterialCommunityIcons 
+              name="video-library" 
+              size={24} 
+              color={activeTab === 'Eventos' ? colors.neonGreen : colors.textSecondary} 
+            />
+            <Text style={[styles.navLabel, { color: activeTab === 'Eventos' ? colors.neonGreen : colors.textSecondary }]}>
+              Eventos
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.navTab}
+            onPress={() => setActiveTab('Ajustes')}
+          >
+            <MaterialCommunityIcons 
+              name="cog-outline" 
+              size={24} 
+              color={activeTab === 'Ajustes' ? colors.neonGreen : colors.textSecondary} 
+            />
+            <Text style={[styles.navLabel, { color: activeTab === 'Ajustes' ? colors.neonGreen : colors.textSecondary }]}>
+              Ajustes
+            </Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Status Cards (Storage, Accelerometer / G-Force, Speedometer) */}
-        <View style={styles.statusContainer}>
-          <StatusCard 
-            iconName="harddisk" 
-            title="STORAGE" 
-            value="128" 
-            valueSuffix="GB" 
-          />
-          <StatusCard 
-            iconName="pulse" 
-            title="ACCEL" 
-            value="1.0" 
-            valueSuffix="G" 
-            isActive={isRecording}
-          />
-          <StatusCard 
-            iconName="speedometer" 
-            title="SPEED" 
-            value="0" 
-            valueSuffix="km/h" 
-          />
-        </View>
-
-        {/* Bottom Navigation */}
-        <BottomNav />
       </View>
     </SafeAreaView>
   );
@@ -163,45 +303,189 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  recordContainer: {
+  tabContent: {
+    flex: 1,
+    width: '100%',
+  },
+  headerSpacer: {
+    paddingHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 25,
+  },
+  tabTitle: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  tabSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  // --- TELEMETRY CARD ---
+  telemetryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 20,
+    marginHorizontal: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  telemetryItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 15,
+  },
+  telemetryValue: {
+    color: colors.textPrimary,
+    fontSize: 32,
+    fontWeight: '900',
+  },
+  telemetryLabel: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  telemetryDivider: {
+    width: 1.5,
+    height: '75%',
+    backgroundColor: colors.border,
+    marginHorizontal: 10,
+  },
+  telemetryItemRight: {
+    flex: 1,
+    paddingLeft: 10,
+  },
+  telemetryLabelUpper: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  gForceValueContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginTop: 4,
+  },
+  gForceValue: {
+    color: colors.textPrimary,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  gForceThreshold: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    marginLeft: 6,
+    fontWeight: '600',
+  },
+  // --- STATUS BADGE ---
+  statusBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 15,
+    marginBottom: 10,
+    paddingHorizontal: 6,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 10,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  // --- PREVIEW CONTAINER ---
+  previewContainer: {
+    height: 220,
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 22,
+    marginHorizontal: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  previewContainerActive: {
+    borderColor: 'rgba(0, 250, 154, 0.15)',
+    shadowColor: colors.neonGreen,
+    shadowOpacity: 0.1,
+  },
+  previewViewport: {
+    flex: 1,
+    position: 'relative',
+  },
+  recBadge: {
+    position: 'absolute',
+    top: 15,
+    left: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 42, 85, 0.4)',
+  },
+  recDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.neonRed,
+    marginRight: 6,
+  },
+  recBadgeText: {
+    color: colors.textPrimary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  previewStandby: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
+    paddingHorizontal: 20,
   },
-  statusBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(18, 24, 27, 0.75)',
-    borderWidth: 1.5,
-    paddingHorizontal: 25,
-    paddingVertical: 14,
-    borderRadius: 20,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 4,
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 12,
-    shadowColor: '#fff',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 3,
-  },
-  statusBoxText: {
-    fontSize: 11,
+  previewStandbyText: {
+    color: colors.textPrimary,
+    fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+    marginTop: 12,
+  },
+  previewStandbySubtext: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  // --- CONTROLS ---
+  controlsContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stopButton: {
-    marginTop: 20,
+    marginTop: 15,
     backgroundColor: 'rgba(255, 42, 85, 0.1)',
     borderWidth: 1.5,
     borderColor: colors.neonRed,
@@ -210,9 +494,9 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     shadowColor: colors.neonRed,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   stopButtonDisabled: {
     borderColor: colors.border,
@@ -222,14 +506,139 @@ const styles = StyleSheet.create({
   },
   stopButtonText: {
     color: colors.neonRed,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     letterSpacing: 2,
   },
-  statusContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  // --- GALLERY VIEW ---
+  emptyGalleryContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    marginBottom: 60,
+  },
+  emptyGalleryText: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 15,
+    letterSpacing: 1,
+  },
+  emptyGallerySubtext: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  // --- SETTINGS VIEW ---
+  settingsList: {
     paddingHorizontal: 20,
-    paddingBottom: 40,
+  },
+  settingCard: {
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+  },
+  settingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  settingTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+    marginLeft: 10,
+    letterSpacing: 0.5,
+  },
+  settingDescription: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 18,
+  },
+  actionButton: {
+    backgroundColor: 'rgba(255, 159, 10, 0.1)',
+    borderWidth: 1,
+    borderColor: '#FF9F0A',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 15,
+  },
+  actionButtonText: {
+    color: '#FF9F0A',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  mockSliderContainer: {
+    marginTop: 15,
+  },
+  mockSliderBg: {
+    height: 6,
+    backgroundColor: colors.border,
+    borderRadius: 3,
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  mockSliderProgress: {
+    position: 'absolute',
+    left: 0,
+    width: '60%',
+    height: '100%',
+    backgroundColor: colors.neonGreen,
+    borderRadius: 3,
+  },
+  mockSliderKnob: {
+    position: 'absolute',
+    left: '60%',
+    marginLeft: -8,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.textPrimary,
+    borderWidth: 2,
+    borderColor: colors.neonGreen,
+  },
+  sliderLabel: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 10,
+    textAlign: 'right',
+  },
+  // --- BOTTOM NAV BAR ---
+  bottomNavContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+    paddingVertical: 12,
+    paddingBottom: 25,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1.5,
+    borderTopColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  navTab: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  navLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 4,
   },
 });

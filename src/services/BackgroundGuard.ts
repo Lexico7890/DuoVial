@@ -68,4 +68,13 @@ export class BackgroundGuard {
       BackgroundCameraModule.triggerPanic();
     }
   }
+
+  /**
+   * Solicita el permiso para dibujar sobre otras aplicaciones (Burbuja flotante).
+   */
+  static requestOverlayPermission() {
+    if (BackgroundCameraModule && BackgroundCameraModule.requestOverlayPermission) {
+      BackgroundCameraModule.requestOverlayPermission();
+    }
+  }
 }

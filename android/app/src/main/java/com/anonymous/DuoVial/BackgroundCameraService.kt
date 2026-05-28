@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -18,11 +21,19 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Vibrator
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.Recorder
@@ -31,15 +42,17 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Quality
+import androidx.camera.view.PreviewView
 import java.io.File
 import java.io.FileInputStream
 import java.io.OutputStream
 
 /**
- * Servicio en primer plano (Foreground Service) nativo re-calibrado:
- * 1. Monitoreo por Acelerómetro nativo (Fuerza G > 2.5G) para detectar impactos reales.
- * 2. Remoción total del micrófono (evita grabaciones de voz y falsos positivos de audio).
- * 3. Bucle de buffer circular y lógica exacta de Escenarios 1 y 2.
+ * Servicio en primer plano nativo de alto rendimiento re-calibrado con:
+ * 1. Integración de la vista de Preview de CameraX en tiempo real.
+ * 2. Emisión rate-limitada de valores del acelerómetro (200ms) para actualizar la UI en vivo.
+ * 3. Estados específicos solicitados: "INICIANDO DUOVIAL", "DUOVIAL ACTIVO", "GENERANDO CONTENIDO POST EVENTO".
+ * 4. Burbuja flotante (Overlay) interactiva y arrastrable sobre otras aplicaciones.
  */
 class BackgroundCameraService : LifecycleService() {
 
@@ -62,12 +75,23 @@ class BackgroundCameraService : LifecycleService() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // Acelerómetro nativo para impactos
+    // Acelerómetro nativo
     private var sensorManager: SensorManager? = null
     private var accelSensor: Sensor? = null
+    private var lastAccelUpdateTime = 0L
 
     // Cooldown para Triggers (12 segundos)
     private var lastEventTriggerTime = 0L
+
+    // Elementos de la burbuja flotante
+    private var windowManager: WindowManager? = null
+    private var floatingBubbleView: View? = null
+
+    companion object {
+        // Referencia estática del Preview de CameraX y la vista nativa activa para la UI de React Native
+        var activePreview: Preview? = null
+        var activePreviewView: PreviewView? = null
+    }
 
     // Runnable para la rotación automática del buffer cada 15 segundos
     private val rotateRunnable = Runnable {
@@ -81,7 +105,7 @@ class BackgroundCameraService : LifecycleService() {
         currentActiveRecording?.stop()
     }
 
-    // Listener del acelerómetro para Fuerza G
+    // Listener del acelerómetro
     private val accelListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
@@ -89,13 +113,17 @@ class BackgroundCameraService : LifecycleService() {
                 val y = event.values[1]
                 val z = event.values[2]
                 
-                // Magnitud total en m/s^2
                 val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble())
-                
-                // Conversión a Fuerza G (dividiendo por gravedad terrestre ~9.81 m/s^2)
                 val gForce = magnitude / SensorManager.GRAVITY_EARTH
                 
-                // Umbral recomendado de impacto > 2.5G
+                // 1. Emitir la Fuerza G en vivo a la UI JS rate-limitada a 200ms para evitar lags de puente
+                val now = System.currentTimeMillis()
+                if (now - lastAccelUpdateTime > 200) {
+                    lastAccelUpdateTime = now
+                    sendAccelUpdate(gForce)
+                }
+
+                // 2. Evaluar umbral de impacto > 2.5G
                 if (gForce > 2.5) {
                     triggerCollisionEvent("Acelerómetro Impacto Detectado: ${String.format("%.2f", gForce)} G")
                 }
@@ -110,6 +138,11 @@ class BackgroundCameraService : LifecycleService() {
         startServiceNotification()
         startCameraX()
         startSensors()
+        
+        // Mostrar burbuja flotante si hay autorización
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            showFloatingBubble()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -117,7 +150,7 @@ class BackgroundCameraService : LifecycleService() {
         Log.d(TAG, "Servicio iniciado...")
         
         if (intent != null && intent.action == "ACTION_TRIGGER_PANIC") {
-            triggerCollisionEvent("Botón de Pánico Manual")
+            triggerCollisionEvent("Botón de Pánico Manual o Burbuja")
         }
         
         return START_STICKY
@@ -127,9 +160,13 @@ class BackgroundCameraService : LifecycleService() {
         Log.d(TAG, "Destruyendo servicio de cámara...")
         stopCircularBufferTimers()
         stopSensors()
+        removeFloatingBubble()
         
         currentActiveRecording?.stop()
         currentActiveRecording = null
+        
+        activePreview?.setSurfaceProvider(null)
+        activePreview = null
         
         cameraProvider?.unbindAll()
         sendStatusUpdate("INACTIVO")
@@ -141,7 +178,10 @@ class BackgroundCameraService : LifecycleService() {
         return null
     }
 
-    // Enviar broadcast local para actualizar la UI en JS
+    // ==========================================
+    // EMISIÓN DE EVENTOS Y TELEMETRÍA A JS
+    // ==========================================
+
     private fun sendStatusUpdate(status: String) {
         try {
             val intent = Intent("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED").apply {
@@ -149,7 +189,18 @@ class BackgroundCameraService : LifecycleService() {
             }
             sendBroadcast(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al enviar broadcast: ${e.message}")
+            Log.e(TAG, "Error al enviar broadcast de estado: ${e.message}")
+        }
+    }
+
+    private fun sendAccelUpdate(gForce: Double) {
+        try {
+            val intent = Intent("com.anonymous.DuoVial.ACCEL_CHANGED").apply {
+                putExtra("gForce", gForce)
+            }
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar broadcast de aceleración: ${e.message}")
         }
     }
 
@@ -194,7 +245,7 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     // ==========================================
-    // CONFIGURACIÓN DE CAMERAX
+    // CONFIGURACIÓN DE CAMERAX CON PREVIEW
     // ==========================================
 
     private fun startCameraX() {
@@ -209,16 +260,32 @@ class BackgroundCameraService : LifecycleService() {
                     
                 videoCapture = VideoCapture.withOutput(recorder)
                 
+                // 1. Crear el caso de uso del Preview para la UI
+                val preview = Preview.Builder().build()
+                activePreview = preview
+                
+                // Vincular SurfaceProvider si el PreviewView ya se encuentra montado en la UI
+                val activeView = activePreviewView
+                if (activeView != null) {
+                    try {
+                        preview.setSurfaceProvider(activeView.surfaceProvider)
+                        Log.d(TAG, "PreviewView montado previamente vinculado con éxito.")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error al vincular vista existente: ${e.message}")
+                    }
+                }
+                
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
                 cameraProvider?.unbindAll()
                 cameraProvider?.bindToLifecycle(
                     this,
                     cameraSelector,
+                    preview, // Vincular Preview también
                     videoCapture
                 )
                 
-                Log.d(TAG, "CameraX vinculada correctamente al servicio.")
+                Log.d(TAG, "CameraX vinculada correctamente al servicio nativo.")
                 startCircularBuffer()
                 
             } catch (e: Exception) {
@@ -237,7 +304,8 @@ class BackgroundCameraService : LifecycleService() {
         shortSegmentSaving = false
         isScenario1 = false
         
-        sendStatusUpdate("VIGILANDO")
+        // Al iniciar por primera vez
+        sendStatusUpdate("INICIANDO DUOVIAL")
         startRecordingSegment(0)
     }
 
@@ -280,6 +348,10 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
         if (!isSavingEvent) {
+            // El primer frame se completó con éxito, rotamos al segundo. 
+            // A partir de este momento pasamos al estado de vigilancia activa estable.
+            sendStatusUpdate("DUOVIAL ACTIVO")
+            
             val nextIndex = 1 - currentRecordingIndex
             startRecordingSegment(nextIndex)
         } else {
@@ -328,7 +400,7 @@ class BackgroundCameraService : LifecycleService() {
             Log.d(TAG, "ESCENARIO 1 activo: Sin frame previo completo. Guardando segmento actual parcial.")
             isScenario1 = true
             shortSegmentSaving = true
-            sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/2)")
+            sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
             currentActiveRecording?.stop()
         } else {
             // ESCENARIO 2: Existe un frame previo completo
@@ -337,13 +409,13 @@ class BackgroundCameraService : LifecycleService() {
                 // Buffer corto
                 Log.d(TAG, "ESCENARIO 2 activo (Buffer Corto < 14s). Guardando previo + actual parcial.")
                 shortSegmentSaving = true
-                sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/3)")
+                sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
                 currentActiveRecording?.stop()
             } else {
                 // Buffer largo
                 Log.d(TAG, "ESCENARIO 2 activo (Buffer Largo >= 14s). Guardando segmento actual completo.")
                 shortSegmentSaving = false
-                sendStatusUpdate("GUARDANDO PRE-EVENTO (Fase 1/2)")
+                sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
                 currentActiveRecording?.stop()
             }
         }
@@ -375,11 +447,11 @@ class BackgroundCameraService : LifecycleService() {
             copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_part$finalPartIndex.mp4")
             
             Log.i(TAG, "✅ Incidente guardado con éxito. Reanudando buffer circular...")
-            sendStatusUpdate("VIGILANDO")
             
             val postFile = File(cacheDir, "segment_post.mp4")
             if (postFile.exists()) postFile.delete()
             
+            // Reanudar buffer circular volviendo a DUOVIAL ACTIVO
             startCircularBuffer()
         }
     }
@@ -391,7 +463,7 @@ class BackgroundCameraService : LifecycleService() {
             return
         }
         
-        sendStatusUpdate("GRABANDO POST-EVENTO (15s)")
+        sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
         
         val postFile = File(cacheDir, "segment_post.mp4")
         if (postFile.exists()) {
@@ -483,9 +555,7 @@ class BackgroundCameraService : LifecycleService() {
             
             if (accelSensor != null) {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                Log.d(TAG, "Acelerómetro registrado y activo para Fuerza G.")
-            } else {
-                Log.w(TAG, "El acelerómetro no está disponible en este dispositivo.")
+                Log.d(TAG, "Acelerómetro registrado y activo.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error al registrar acelerómetro: ${e.message}")
@@ -494,6 +564,125 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun stopSensors() {
         sensorManager?.unregisterListener(accelListener)
+    }
+
+    // ==========================================
+    // INTERFAZ DE BURBUJA FLOTANTE DRAGGABLE (PIP)
+    // ==========================================
+
+    private fun showFloatingBubble() {
+        try {
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            
+            val density = resources.displayMetrics.density
+            val size = (60 * density).toInt() // Sleek circular size
+            
+            // Programar LayoutParams del overlay flotante
+            val layoutParams = WindowManager.LayoutParams(
+                size,
+                size,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
+                else 
+                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = (resources.displayMetrics.widthPixels - size - (20 * density).toInt()) // Posición lateral inicial
+                y = (150 * density).toInt()
+            }
+            
+            // Crear el layout contenedor de la burbuja
+            val bubble = FrameLayout(this)
+            
+            // Diseñar el círculo en código usando GradientDrawable (cero dependencias extras, 100% estable)
+            val shape = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#FF2A55")) // Rojo Neón de DuoVial
+                setStroke((2.5 * density).toInt(), Color.parseColor("#FFFFFF")) // Borde blanco
+            }
+            bubble.background = shape
+            
+            // Colocar un icono representativo de cámara nativo dentro de la burbuja
+            val icon = ImageView(this).apply {
+                val padding = (16 * density).toInt()
+                setPadding(padding, padding, padding, padding)
+                setImageResource(android.R.drawable.presence_video_online) // Icono nativo de punto de grabación
+                setColorFilter(Color.WHITE)
+            }
+            bubble.addView(icon)
+            
+            floatingBubbleView = bubble
+            
+            // Lógica de arrastre (Draggable) y Click
+            bubble.setOnTouchListener(object : View.OnTouchListener {
+                private var initialX = 0
+                private var initialY = 0
+                private var initialTouchX = 0f
+                private var initialTouchY = 0f
+                private var isClick = false
+
+                override fun onTouch(v: View, event: MotionEvent): Boolean {
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            initialX = layoutParams.x
+                            initialY = layoutParams.y
+                            initialTouchX = event.rawX
+                            initialTouchY = event.rawY
+                            isClick = true
+                            return true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            if (isClick) {
+                                // Vibrar e indicar que fue gatillado
+                                triggerVibration()
+                                triggerCollisionEvent("Burbuja Flotante Manual")
+                            }
+                            return true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val dx = (event.rawX - initialTouchX).toInt()
+                            val dy = (event.rawY - initialTouchY).toInt()
+                            
+                            // Tolerancia para discernir movimiento de click
+                            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                                isClick = false
+                            }
+                            
+                            layoutParams.x = initialX + dx
+                            layoutParams.y = initialY + dy
+                            
+                            try {
+                                windowManager?.updateViewLayout(bubble, layoutParams)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error al actualizar posición de burbuja: ${e.message}")
+                            }
+                            return true
+                        }
+                    }
+                    return false
+                }
+            })
+            
+            windowManager?.addView(bubble, layoutParams)
+            Log.i(TAG, "Burbuja flotante activa y dibujada con éxito.")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al crear la burbuja flotante: ${e.message}")
+        }
+    }
+
+    private fun removeFloatingBubble() {
+        if (floatingBubbleView != null) {
+            try {
+                windowManager?.removeView(floatingBubbleView)
+                floatingBubbleView = null
+                Log.d(TAG, "Burbuja flotante removida con éxito.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al remover burbuja flotante: ${e.message}")
+            }
+        }
     }
 
     private fun triggerVibration() {

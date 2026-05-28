@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
@@ -14,7 +16,11 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
- * Módulo puente nativo que escucha los eventos del servicio y los retransmite a la UI en JavaScript en tiempo real.
+ * Módulo puente nativo de alto rendimiento que:
+ * 1. Transmite transiciones de estado nativas a React Native JS.
+ * 2. Transmite telemetría del acelerómetro en tiempo real rate-limitada para evitar lags en el JS bridge.
+ * 3. Expone control de arranque, parada y pánico.
+ * 4. Expone la solicitud interactiva de permisos de burbuja flotante (Draw Overlays).
  */
 class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
@@ -22,23 +28,34 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent != null && intent.action == "com.anonymous.DuoVial.CAMERA_STATUS_CHANGED") {
-                val status = intent.getStringExtra("status") ?: "INACTIVO"
-                sendStatusEventToJS(status)
+            if (intent != null) {
+                when (intent.action) {
+                    "com.anonymous.DuoVial.CAMERA_STATUS_CHANGED" -> {
+                        val status = intent.getStringExtra("status") ?: "INACTIVO"
+                        sendStatusEventToJS(status)
+                    }
+                    "com.anonymous.DuoVial.ACCEL_CHANGED" -> {
+                        val gForce = intent.getDoubleExtra("gForce", 1.0)
+                        sendAccelEventToJS(gForce)
+                    }
+                }
             }
         }
     }
 
     init {
-        // Registrar el local receiver para escuchar el estado del servicio nativo
-        val filter = IntentFilter("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED")
+        // Registrar el local receiver para escuchar el estado del servicio y acelerómetro nativos
+        val filter = IntentFilter().apply {
+            addAction("com.anonymous.DuoVial.CAMERA_STATUS_CHANGED")
+            addAction("com.anonymous.DuoVial.ACCEL_CHANGED")
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 reactContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
                 reactContext.registerReceiver(receiver, filter)
             }
-            Log.d(TAG, "BroadcastReceiver registrado para escuchar estado de la cámara.")
+            Log.d(TAG, "BroadcastReceiver registrado para escuchar estado y aceleración.")
         } catch (e: Exception) {
             Log.e(TAG, "Error al registrar BroadcastReceiver: ${e.message}")
         }
@@ -71,6 +88,19 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
         }
     }
 
+    private fun sendAccelEventToJS(gForce: Double) {
+        try {
+            val params = Arguments.createMap().apply {
+                putDouble("gForce", gForce)
+            }
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onAccelChanged", params)
+        } catch (e: Exception) {
+            // Ignorar para evitar spam
+        }
+    }
+
     @ReactMethod
     fun startRecording() {
         Log.d(TAG, "Iniciando grabación en segundo plano desde JS...")
@@ -78,7 +108,7 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
         val intent = Intent(context, BackgroundCameraService::class.java)
         try {
             ContextCompat.startForegroundService(context, intent)
-            sendStatusEventToJS("VIGILANDO")
+            sendStatusEventToJS("INICIANDO DUOVIAL")
         } catch (e: Exception) {
             Log.e(TAG, "Error al arrancar el servicio de cámara nativo: ${e.message}")
         }
@@ -108,6 +138,26 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
             ContextCompat.startForegroundService(context, intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error al enviar el intent de pánico al servicio: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun requestOverlayPermission() {
+        val context = reactApplicationContext
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(context)) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error al abrir pantalla de permisos de overlay: ${e.message}")
+                }
+            }
         }
     }
 }

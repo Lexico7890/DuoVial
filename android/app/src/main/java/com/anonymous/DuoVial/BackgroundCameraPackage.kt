@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 import java.util.ArrayList
 
 /**
- * Registrador del paquete nativo para cargarlo en la aplicación React Native.
+ * Registrador del paquete nativo para cargarlo en la aplicación React Native, incluyendo módulos y vistas nativas.
  */
 class BackgroundCameraPackage : ReactPackage {
 
@@ -18,6 +18,8 @@ class BackgroundCameraPackage : ReactPackage {
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-        return emptyList()
+        val viewManagers = ArrayList<ViewManager<*, *>>()
+        viewManagers.add(BackgroundCameraPreviewManager())
+        return viewManagers
     }
 }
