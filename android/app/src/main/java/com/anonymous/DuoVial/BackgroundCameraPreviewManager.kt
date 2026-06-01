@@ -25,31 +25,10 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
         // Guardar referencia en el servicio para vinculación bidireccional
         BackgroundCameraService.activePreviewView = previewView
         
-        // Intentar vincular de inmediato y programar reintentos en el hilo principal
-        bindPreviewWithRetry(previewView, 0)
+        // Vincular el preview de forma dinámica si el servicio está activo
+        BackgroundCameraService.instance?.bindPreviewUseCase(previewView)
         
         return previewView
-    }
-
-    private fun bindPreviewWithRetry(previewView: PreviewView, attempt: Int) {
-        val preview = BackgroundCameraService.activePreview
-        if (preview != null) {
-            previewView.post {
-                try {
-                    preview.setSurfaceProvider(previewView.surfaceProvider)
-                    Log.i(TAG, "Vinculación exitosa de PreviewView (Intento $attempt)")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error al vincular SurfaceProvider en intento $attempt: ${e.message}")
-                }
-            }
-        } else if (attempt < 6) {
-            // Reintentar en 500ms si el servicio de cámara aún está iniciando
-            previewView.postDelayed({
-                bindPreviewWithRetry(previewView, attempt + 1)
-            }, 500)
-        } else {
-            Log.w(TAG, "Se superó el límite de reintentos para vincular el preview.")
-        }
     }
 
     override fun onDropViewInstance(view: PreviewView) {
@@ -57,11 +36,10 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
         if (BackgroundCameraService.activePreviewView == view) {
             BackgroundCameraService.activePreviewView = null
         }
-        try {
-            BackgroundCameraService.activePreview?.setSurfaceProvider(null)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al desvincular SurfaceProvider: ${e.message}")
-        }
+        
+        // Desvincular el preview de forma dinámica en el servicio
+        BackgroundCameraService.instance?.unbindPreviewUseCase()
+        
         super.onDropViewInstance(view)
     }
 }

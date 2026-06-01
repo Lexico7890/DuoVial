@@ -99,6 +99,7 @@ class BackgroundCameraService : LifecycleService() {
     private var floatingBubbleView: View? = null
 
     companion object {
+        var instance: BackgroundCameraService? = null
         var activePreview: Preview? = null
         var activePreviewView: PreviewView? = null
         var statusListener: CameraStatusListener? = null
@@ -146,6 +147,7 @@ class BackgroundCameraService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Creando servicio de cámara...")
+        instance = this
         startServiceNotification()
         startCameraX()
         startSensors()
@@ -176,6 +178,7 @@ class BackgroundCameraService : LifecycleService() {
 
     override fun onDestroy() {
         Log.d(TAG, "Destruyendo servicio de cámara...")
+        instance = null
         stopCircularBufferTimers()
         stopSensors()
         removeFloatingBubble()
@@ -189,6 +192,48 @@ class BackgroundCameraService : LifecycleService() {
         cameraProvider?.unbindAll()
         statusListener?.onStatusChanged("INACTIVO")
         super.onDestroy()
+    }
+
+    fun bindPreviewUseCase(previewView: PreviewView) {
+        val provider = cameraProvider ?: return
+        Log.i(TAG, "Vinculando Preview Use Case dinámicamente...")
+        handler.post {
+            try {
+                val oldPreview = activePreview
+                if (oldPreview != null && provider.isBound(oldPreview)) {
+                    provider.unbind(oldPreview)
+                }
+                
+                val preview = Preview.Builder().build()
+                activePreview = preview
+                
+                preview.setSurfaceProvider(previewView.surfaceProvider)
+                
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                provider.bindToLifecycle(this, cameraSelector, preview)
+                Log.d(TAG, "Preview Use Case vinculado dinámicamente con éxito.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al vincular Preview dinámicamente: ${e.message}")
+            }
+        }
+    }
+
+    fun unbindPreviewUseCase() {
+        val provider = cameraProvider ?: return
+        val preview = activePreview ?: return
+        Log.i(TAG, "Desvinculando Preview Use Case dinámicamente...")
+        handler.post {
+            try {
+                if (provider.isBound(preview)) {
+                    provider.unbind(preview)
+                }
+                preview.setSurfaceProvider(null)
+                activePreview = null
+                Log.d(TAG, "Preview Use Case desvinculado con éxito.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al desvincular Preview dinámicamente: ${e.message}")
+            }
+        }
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -246,7 +291,7 @@ class BackgroundCameraService : LifecycleService() {
     // ==========================================
 
     private fun startCameraX() {
-        Log.i(TAG, "Iniciando CameraX (Intento ${cameraInitAttempts + 1})...")
+        Log.i(TAG, "Iniciando CameraX...")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
@@ -258,45 +303,28 @@ class BackgroundCameraService : LifecycleService() {
                     
                 videoCapture = VideoCapture.withOutput(recorder)
                 
-                val preview = Preview.Builder().build()
-                activePreview = preview
-                
-                val activeView = activePreviewView
-                if (activeView != null) {
-                    try {
-                        preview.setSurfaceProvider(activeView.surfaceProvider)
-                        Log.d(TAG, "PreviewView vinculado con éxito en startCameraX.")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error al vincular vista: ${e.message}")
-                    }
-                }
-                
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
                 cameraProvider?.unbindAll()
+                // Vincular únicamente videoCapture al inicio para evitar bloquear la cámara
                 cameraProvider?.bindToLifecycle(
                     this,
                     cameraSelector,
-                    preview,
                     videoCapture
                 )
+                Log.d(TAG, "VideoCapture de CameraX vinculado correctamente.")
                 
-                Log.d(TAG, "CameraX vinculada correctamente.")
-                cameraInitAttempts = 0 // Resetear intentos al tener éxito
+                // Si la vista de preview ya está montada, vincularla de inmediato
+                val activeView = activePreviewView
+                if (activeView != null) {
+                    bindPreviewUseCase(activeView)
+                }
+                
                 startCircularBuffer()
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar CameraX en intento ${cameraInitAttempts + 1}: ${e.message}")
-                cameraInitAttempts++
-                if (cameraInitAttempts < maxCameraInitAttempts) {
-                    Log.w(TAG, "Reintentando inicialización de CameraX en 1.5 segundos...")
-                    handler.postDelayed({
-                        startCameraX()
-                    }, 1500)
-                } else {
-                    Log.e(TAG, "Se alcanzó el número máximo de intentos para iniciar CameraX. Pantalla negra permanente.")
-                    sendStatusUpdate("ERROR EN CÁMARA")
-                }
+                Log.e(TAG, "Error al iniciar CameraX: ${e.message}")
+                sendStatusUpdate("ERROR EN CÁMARA")
             }
         }, ContextCompat.getMainExecutor(this))
     }

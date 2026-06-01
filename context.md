@@ -344,17 +344,7 @@ Ubicación: Centro de pantalla, prominente
 Acción: saveBufferOnImpact() guarda últimos 30 seg
 ```
 
-### Trigger 2: Detección de Audio (ALTA)
-```
-Prioridad: ⭐⭐⭐ Implementar en MVP
-Cobertura: 35% adicional (impactos sin movimiento)
-Implementación: 1 semana (calibración de umbrales)
-Umbral: Picos de decibelios > -20 dB
-Frecuencias: Detectar impacto (metal/vidrio), filtrar música
-Falsos positivos: Mitigación con confirmación cruzada de sensores
-```
-
-### Trigger 3: Giroscopio (ALTA)
+### Trigger 2: Giroscopio (ALTA)
 ```
 Prioridad: ⭐⭐⭐ Implementar en MVP
 Cobertura: 15% adicional (derrapes, volcamientos)
@@ -363,7 +353,7 @@ Umbral: Rotación > 3.0 rad/seg indica evento anormal
 Casos: Derrape, pérdida de control, vuelco, impacto lateral
 ```
 
-### Trigger 4: Acelerómetro (BAJA - BACKUP)
+### Trigger 3: Acelerómetro (BAJA - BACKUP)
 ```
 Prioridad: ⭐ Mantener por compatibilidad
 Cobertura: No confiable (máximo ~1.3G en pruebas reales)
@@ -371,7 +361,7 @@ Umbral: Si implementar, usar > 2.5G (muy conservador)
 Nota: NO CONFIAR en este como trigger primario
 ```
 
-### Trigger 5: GPS Desaceleración (OPCIONAL - POST-MVP)
+### Trigger 4: GPS Desaceleración (OPCIONAL - POST-MVP)
 ```
 Prioridad: ⭐ Implementar en Fase 2 si necesario
 Cobertura: 10% adicional

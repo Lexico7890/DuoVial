@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
-import { RecordButton } from './src/components/RecordButton';
 import { StatusCard } from './src/components/StatusCard';
 import { BottomNav } from './src/components/BottomNav';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -175,49 +174,49 @@ export default function App() {
           )}
         </View>
 
-        {/* Controles de grabación (Burbuja Izquierda, Pánico Central Amarillo, Vigilante Derecho Verde/Rojo) */}
+        {/* Controles de grabación (Panel rectangular de doble acción) */}
         <View style={styles.controlsContainer}>
-          <View style={styles.controlsRow}>
-            {/* Botón de Burbuja Flotante PIP (Izquierda) */}
+          <View style={styles.controlsRowHorizontal}>
+            {/* Botón Rectangular Amarillo: Solo PÁNICO */}
             <TouchableOpacity 
               activeOpacity={0.8}
-              onPress={() => BackgroundGuard.requestOverlayPermission()}
-              disabled={isSaving}
+              onPress={handleToggle}
+              disabled={isSaving || !isRecording}
               style={[
-                styles.burbujaButton,
-                isSaving && styles.burbujaButtonDisabled
+                styles.panicRectButton,
+                !isRecording && styles.panicRectButtonInactive,
+                isSaving && styles.panicRectButtonSaving
               ]}
             >
               <MaterialCommunityIcons 
-                name="window-restore" 
-                size={22} 
-                color="#FF9F0A" 
+                name={isSaving ? "progress-download" : "alert-decagram"} 
+                size={20} 
+                color="#000" 
+                style={{ marginRight: 8 }}
               />
-              <Text style={styles.burbujaButtonText}>
-                BURBUJA
+              <Text style={styles.panicRectButtonText}>
+                {isSaving ? "GUARDANDO..." : "⚠️ GATILLAR EVENTO (PÁNICO)"}
               </Text>
             </TouchableOpacity>
-
-            {/* Botón Circular Central Amarillo: Solo PÁNICO */}
-            <RecordButton isRecording={isRecording} onToggle={handleToggle} disabled={isSaving} />
             
-            {/* Botón de Encendido/Apagado del Vigilante (Verde/Rojo) */}
+            {/* Botón de Encendido/Apagado del Vigilante (Verde/Rojo Rectangular) */}
             <TouchableOpacity 
               activeOpacity={0.8}
               onPress={isRecording ? handleStop : handleStart}
               disabled={isSaving}
               style={[
-                styles.powerButton,
+                styles.powerRectButton,
                 { backgroundColor: isRecording ? colors.neonRed : colors.neonGreen },
-                isSaving && styles.powerButtonDisabled
+                isSaving && styles.powerRectButtonDisabled
               ]}
             >
               <MaterialCommunityIcons 
                 name={isRecording ? "stop" : "play"} 
-                size={24} 
+                size={18} 
                 color="#000" 
+                style={{ marginRight: 6 }}
               />
-              <Text style={styles.powerButtonText}>
+              <Text style={styles.powerRectButtonText}>
                 {isRecording ? 'APAGAR' : 'ENCENDER'}
               </Text>
             </TouchableOpacity>
@@ -491,7 +490,7 @@ const styles = StyleSheet.create({
   },
   // --- PREVIEW CONTAINER ---
   previewContainer: {
-    height: 220,
+    height: 355,
     backgroundColor: colors.cardBackground,
     borderWidth: 1.5,
     borderColor: colors.border,
@@ -608,60 +607,69 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingHorizontal: 20,
   },
-  burbujaButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 159, 10, 0.12)',
-    borderWidth: 1.5,
-    borderColor: '#FF9F0A',
+  controlsRowHorizontal: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 10,
+  },
+  panicRectButton: {
+    flex: 2.2,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#FFD700',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 12,
     elevation: 6,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
-    shadowColor: '#FF9F0A',
+    shadowColor: '#FFD700',
   },
-  burbujaButtonDisabled: {
-    borderColor: colors.border,
-    backgroundColor: 'rgba(30, 41, 59, 0.1)',
+  panicRectButtonInactive: {
+    backgroundColor: '#3A3F42',
     shadowOpacity: 0,
     elevation: 0,
-    opacity: 0.4,
+    opacity: 0.6,
   },
-  burbujaButtonText: {
-    color: '#FF9F0A',
-    fontSize: 7.5,
+  panicRectButtonSaving: {
+    backgroundColor: '#FF9F0A',
+    shadowColor: '#FF9F0A',
+  },
+  panicRectButtonText: {
+    color: '#000',
+    fontSize: 11,
     fontWeight: '900',
-    marginTop: 2,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
-  powerButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+  powerRectButton: {
+    flex: 1.1,
+    height: 56,
+    borderRadius: 16,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 10,
     elevation: 6,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
     shadowColor: '#000',
   },
-  powerButtonDisabled: {
+  powerRectButtonDisabled: {
     backgroundColor: colors.border,
     opacity: 0.4,
     elevation: 0,
+    shadowOpacity: 0,
   },
-  powerButtonText: {
+  powerRectButtonText: {
     color: '#000',
-    fontSize: 7.5,
+    fontSize: 11,
     fontWeight: '900',
-    marginTop: 2,
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   stopButton: {
     marginTop: 15,
