@@ -52,13 +52,16 @@ export default function App() {
     requestInitialPermissions();
   }, []);
 
-  // Iniciar la cámara en modo Standby apenas se concedan los permisos
+  // Iniciar la cámara en modo Standby apenas se concedan los permisos y el usuario esté en el Monitor
   useEffect(() => {
-    if (hasCameraPermission === true) {
-      console.log('JS: Permisos concedidos. Iniciando cámara en Standby...');
-      BackgroundGuard.startStandby();
+    if (activeTab === 'Monitor' && hasCameraPermission === true) {
+      console.log('JS: Monitor activo y permisos concedidos. Iniciando cámara en Standby con retraso de seguridad...');
+      const timer = setTimeout(() => {
+        BackgroundGuard.startStandby();
+      }, 250);
+      return () => clearTimeout(timer);
     }
-  }, [hasCameraPermission]);
+  }, [activeTab, hasCameraPermission]);
 
   // Escuchar eventos nativos en tiempo real desde el servicio en Kotlin
   useEffect(() => {

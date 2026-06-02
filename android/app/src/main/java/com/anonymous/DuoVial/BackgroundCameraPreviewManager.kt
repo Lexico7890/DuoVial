@@ -1,6 +1,7 @@
 package com.anonymous.DuoVial
 
 import android.util.Log
+import android.view.View
 import androidx.camera.view.PreviewView
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
@@ -21,6 +22,23 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
         Log.d(TAG, "Creando instancia nativa de PreviewView...")
         val previewView = PreviewView(reactContext)
         previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        
+        // Registrar OnAttachStateChangeListener para un enlace dinámico infalible
+        previewView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                Log.d(TAG, "PreviewView acoplado a la ventana (onViewAttachedToWindow).")
+                BackgroundCameraService.activePreviewView = previewView
+                BackgroundCameraService.instance?.bindPreviewUseCase(previewView)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                Log.d(TAG, "PreviewView desacoplado de la ventana (onViewDetachedFromWindow).")
+                if (BackgroundCameraService.activePreviewView == previewView) {
+                    BackgroundCameraService.activePreviewView = null
+                }
+                BackgroundCameraService.instance?.onPreviewViewDropped()
+            }
+        })
         
         // Guardar referencia en el servicio para vinculación bidireccional
         BackgroundCameraService.activePreviewView = previewView
