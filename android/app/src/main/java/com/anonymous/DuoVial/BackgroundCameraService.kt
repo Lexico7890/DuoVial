@@ -254,6 +254,7 @@ class BackgroundCameraService : LifecycleService() {
         currentActiveRecording?.stop()
         currentActiveRecording = null
         
+        updateNotification("DuoVial", "Cámara lista.")
         sendStatusUpdate("INACTIVO")
     }
 
@@ -265,16 +266,17 @@ class BackgroundCameraService : LifecycleService() {
         Log.i(TAG, "Cambiando a modo RECORDING...")
         serviceState = ServiceState.RECORDING
         
+        updateNotification("🎥 DuoVial - Vigilando", "Grabación circular activa en segundo plano.")
         startCircularBuffer()
         startSensors()
     }
 
     fun onPreviewViewDropped() {
         activePreviewView = null
-        if (serviceState == ServiceState.STANDBY) {
-            Log.i(TAG, "Vista de previsualización descartada en modo STANDBY. Apagando servicio nativo para ahorrar batería.")
-            stopSelf()
-        }
+        // Desconectar el surface provider pero NO destruir el servicio.
+        // Destruir y recrear el servicio causa race conditions con CameraX y notificación spam.
+        activePreview?.setSurfaceProvider(null)
+        Log.i(TAG, "Vista de previsualización descartada. Surface desconectado.")
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -303,8 +305,8 @@ class BackgroundCameraService : LifecycleService() {
         )
         
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🎥 DuoVial - Vigilando")
-            .setContentText("Grabación circular activa en segundo plano.")
+            .setContentTitle("DuoVial")
+            .setContentText("Cámara lista.")
             .setSmallIcon(android.R.drawable.presence_video_online)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -323,12 +325,38 @@ class BackgroundCameraService : LifecycleService() {
         }
     }
 
+    /**
+     * Actualiza la notificación persistente dinámicamente según el estado del servicio.
+     */
+    private fun updateNotification(title: String, text: String) {
+        val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+        
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.notify(NOTIFICATION_ID, notification)
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 "DuoVial - Servicio de Cámara",
-                NotificationManager.IMPORTANCE_HIGH
+                NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(serviceChannel)

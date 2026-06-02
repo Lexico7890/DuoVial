@@ -22,6 +22,9 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
         Log.d(TAG, "Creando instancia nativa de PreviewView...")
         val previewView = PreviewView(reactContext)
         previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        // CRITICAL: Usar TextureView en lugar de SurfaceView para compatibilidad con React Native.
+        // SurfaceView crea una capa de renderizado separada que no se compone bien con la jerarquía de vistas de RN.
+        previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         
         // Registrar OnAttachStateChangeListener para un enlace dinámico infalible
         previewView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
