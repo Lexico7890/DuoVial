@@ -37,8 +37,8 @@ class BackgroundCameraPreviewManager : SimpleViewManager<PreviewView>() {
             BackgroundCameraService.activePreviewView = null
         }
         
-        // Desvincular el preview de forma dinámica en el servicio
-        BackgroundCameraService.instance?.unbindPreviewUseCase()
+        // Informar al servicio que la vista fue destruida
+        BackgroundCameraService.instance?.onPreviewViewDropped()
         
         super.onDropViewInstance(view)
     }

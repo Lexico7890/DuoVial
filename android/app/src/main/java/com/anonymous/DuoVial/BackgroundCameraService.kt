@@ -68,6 +68,14 @@ class BackgroundCameraService : LifecycleService() {
     private val NOTIFICATION_ID = 144
     private val CHANNEL_ID = "duovial_camera_service_channel"
 
+    enum class ServiceState {
+        STANDBY,
+        RECORDING,
+        SAVING
+    }
+
+    private var serviceState = ServiceState.STANDBY
+
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var currentActiveRecording: Recording? = null
@@ -164,13 +172,24 @@ class BackgroundCameraService : LifecycleService() {
         
         if (intent != null) {
             when (intent.action) {
+                "ACTION_START_STANDBY" -> {
+                    startStandbyMode()
+                }
+                "ACTION_START_RECORDING" -> {
+                    startRecordingMode()
+                }
                 "ACTION_TRIGGER_PANIC" -> {
                     triggerCollisionEvent("Botón de Pánico Manual o Burbuja")
                 }
                 "ACTION_STOP_AND_SAVE" -> {
                     stopAndSaveBuffer()
                 }
+                "ACTION_STOP_SERVICE" -> {
+                    stopSelf()
+                }
             }
+        } else {
+            startStandbyMode()
         }
         
         return START_STICKY
@@ -195,44 +214,66 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     fun bindPreviewUseCase(previewView: PreviewView) {
-        val provider = cameraProvider ?: return
-        Log.i(TAG, "Vinculando Preview Use Case dinámicamente...")
+        val preview = activePreview ?: return
+        Log.i(TAG, "Asociando SurfaceProvider al preview activo...")
         handler.post {
             try {
-                val oldPreview = activePreview
-                if (oldPreview != null && provider.isBound(oldPreview)) {
-                    provider.unbind(oldPreview)
-                }
-                
-                val preview = Preview.Builder().build()
-                activePreview = preview
-                
                 preview.setSurfaceProvider(previewView.surfaceProvider)
-                
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                provider.bindToLifecycle(this, cameraSelector, preview)
-                Log.d(TAG, "Preview Use Case vinculado dinámicamente con éxito.")
+                Log.d(TAG, "SurfaceProvider asociado con éxito.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al vincular Preview dinámicamente: ${e.message}")
+                Log.e(TAG, "Error al asociar SurfaceProvider: ${e.message}")
             }
         }
     }
 
     fun unbindPreviewUseCase() {
-        val provider = cameraProvider ?: return
         val preview = activePreview ?: return
-        Log.i(TAG, "Desvinculando Preview Use Case dinámicamente...")
+        Log.i(TAG, "Desasociando SurfaceProvider...")
         handler.post {
             try {
-                if (provider.isBound(preview)) {
-                    provider.unbind(preview)
-                }
                 preview.setSurfaceProvider(null)
-                activePreview = null
-                Log.d(TAG, "Preview Use Case desvinculado con éxito.")
+                Log.d(TAG, "SurfaceProvider desasociado.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al desvincular Preview dinámicamente: ${e.message}")
+                Log.e(TAG, "Error al desasociar SurfaceProvider: ${e.message}")
             }
+        }
+    }
+
+    fun startStandbyMode() {
+        Log.i(TAG, "Cambiando a modo STANDBY...")
+        serviceState = ServiceState.STANDBY
+        isSavingEvent = false
+        postEventRecordingActive = false
+        shortSegmentSaving = false
+        isScenario1 = false
+        isStoppingService = false
+        
+        stopCircularBufferTimers()
+        stopSensors()
+        
+        currentActiveRecording?.stop()
+        currentActiveRecording = null
+        
+        sendStatusUpdate("INACTIVO")
+    }
+
+    fun startRecordingMode() {
+        if (serviceState == ServiceState.RECORDING) {
+            Log.d(TAG, "El servicio ya está en modo RECORDING.")
+            return
+        }
+        Log.i(TAG, "Cambiando a modo RECORDING...")
+        serviceState = ServiceState.RECORDING
+        
+        startCircularBuffer()
+        startSensors()
+    }
+
+    fun onPreviewViewDropped() {
+        activePreviewView = null
+        if (serviceState == ServiceState.STANDBY) {
+            Log.i(TAG, "Vista de previsualización descartada en modo STANDBY. Apagando servicio nativo para ahorrar batería.")
+            stopSelf()
         }
     }
 
@@ -303,24 +344,37 @@ class BackgroundCameraService : LifecycleService() {
                     
                 videoCapture = VideoCapture.withOutput(recorder)
                 
+                val preview = Preview.Builder().build()
+                activePreview = preview
+                
+                // Asociar de inmediato el surface provider si la vista ya existe
+                val activeView = activePreviewView
+                if (activeView != null) {
+                    try {
+                        preview.setSurfaceProvider(activeView.surfaceProvider)
+                        Log.d(TAG, "PreviewView vinculado con éxito en startCameraX.")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error al vincular vista: ${e.message}")
+                    }
+                }
+                
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
                 cameraProvider?.unbindAll()
-                // Vincular únicamente videoCapture al inicio para evitar bloquear la cámara
+                // Vincular AMBOS (Preview y VideoCapture) juntos para evitar session re-configurations
                 cameraProvider?.bindToLifecycle(
                     this,
                     cameraSelector,
+                    preview,
                     videoCapture
                 )
-                Log.d(TAG, "VideoCapture de CameraX vinculado correctamente.")
+                Log.d(TAG, "CameraX vinculada correctamente (Preview + VideoCapture).")
                 
-                // Si la vista de preview ya está montada, vincularla de inmediato
-                val activeView = activePreviewView
-                if (activeView != null) {
-                    bindPreviewUseCase(activeView)
+                if (serviceState == ServiceState.RECORDING) {
+                    startCircularBuffer()
+                } else {
+                    sendStatusUpdate("INACTIVO")
                 }
-                
-                startCircularBuffer()
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error al iniciar CameraX: ${e.message}")

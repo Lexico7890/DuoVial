@@ -52,6 +52,14 @@ export default function App() {
     requestInitialPermissions();
   }, []);
 
+  // Iniciar la cámara en modo Standby apenas se concedan los permisos
+  useEffect(() => {
+    if (hasCameraPermission === true) {
+      console.log('JS: Permisos concedidos. Iniciando cámara en Standby...');
+      BackgroundGuard.startStandby();
+    }
+  }, [hasCameraPermission]);
+
   // Escuchar eventos nativos en tiempo real desde el servicio en Kotlin
   useEffect(() => {
     // 1. Cambios de estado del buffer / grabación
@@ -156,20 +164,16 @@ export default function App() {
             <View style={styles.previewStandby}>
               <ActivityIndicator size="large" color={colors.neonGreen} />
             </View>
-          ) : isRecording ? (
+          ) : (
             <View style={styles.previewViewport}>
               <BackgroundCameraPreview style={StyleSheet.absoluteFill} />
               {/* Indicador de grabación REC parpadeante */}
-              <View style={styles.recBadge}>
-                <View style={styles.recDot} />
-                <Text style={styles.recBadgeText}>REC</Text>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.previewStandby}>
-              <MaterialCommunityIcons name="video-off-outline" size={48} color={colors.textSecondary} />
-              <Text style={styles.previewStandbyText}>MONITOR STANDBY</Text>
-              <Text style={styles.previewStandbySubtext}>Enciende el vigilante para habilitar el Road Scan</Text>
+              {isRecording && (
+                <View style={styles.recBadge}>
+                  <View style={styles.recDot} />
+                  <Text style={styles.recBadgeText}>REC</Text>
+                </View>
+              )}
             </View>
           )}
         </View>

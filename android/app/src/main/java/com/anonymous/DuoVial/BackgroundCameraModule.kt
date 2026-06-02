@@ -74,15 +74,31 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
     }
 
     @ReactMethod
+    fun startStandby() {
+        Log.d(TAG, "Iniciando cámara en modo Standby desde JS...")
+        val context = reactApplicationContext
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = "ACTION_START_STANDBY"
+        }
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al arrancar el servicio de cámara en modo Standby: ${e.message}")
+        }
+    }
+
+    @ReactMethod
     fun startRecording() {
         Log.d(TAG, "Iniciando grabación en segundo plano desde JS...")
         val context = reactApplicationContext
-        val intent = Intent(context, BackgroundCameraService::class.java)
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = "ACTION_START_RECORDING"
+        }
         try {
             ContextCompat.startForegroundService(context, intent)
             sendStatusEventToJS("INICIANDO DUOVIAL")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al arrancar el servicio de cámara nativo: ${e.message}")
+            Log.e(TAG, "Error al arrancar el servicio de grabación de cámara nativo: ${e.message}")
         }
     }
 
@@ -90,15 +106,13 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
     fun stopRecording() {
         Log.d(TAG, "Deteniendo grabación desde JS con guardado seguro...")
         val context = reactApplicationContext
-        // En lugar de matar el servicio directamente, enviamos el intent ACTION_STOP_AND_SAVE
-        // para que guarde el buffer circular actual de pre-evento y luego se apague él mismo.
         val intent = Intent(context, BackgroundCameraService::class.java).apply {
             action = "ACTION_STOP_AND_SAVE"
         }
         try {
             ContextCompat.startForegroundService(context, intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al detener el servicio de cámara nativo: ${e.message}")
+            Log.e(TAG, "Error al enviar ACTION_STOP_AND_SAVE al servicio: ${e.message}")
         }
     }
 

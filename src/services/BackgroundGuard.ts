@@ -10,6 +10,17 @@ export class BackgroundGuard {
   private static watchdogKey = 'duovial_watchdog';
 
   /**
+   * Inicia el servicio nativo de cámara en modo STANDBY (previsualización activa, sin grabar).
+   */
+  static startStandby() {
+    if (BackgroundCameraModule && BackgroundCameraModule.startStandby) {
+      BackgroundCameraModule.startStandby();
+    } else {
+      console.log('startStandby no está disponible en este entorno.');
+    }
+  }
+
+  /**
    * Inicia la grabación de cámara nativa en Foreground Service
    * y registra el WorkManager Watchdog.
    */
