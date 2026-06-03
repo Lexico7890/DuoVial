@@ -83,7 +83,15 @@ class BackgroundCameraService : LifecycleService() {
         SAVING
     }
 
+    enum class SaveMode {
+        SCENARIO_1,
+        SAVE_PREV_AND_CURR,
+        SAVE_ONLY_PREV,
+        SAVE_ONLY_CURR
+    }
+
     private var serviceState = ServiceState.STANDBY
+    private var saveMode = SaveMode.SAVE_ONLY_CURR
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
@@ -94,13 +102,13 @@ class BackgroundCameraService : LifecycleService() {
     private var currentRecordingIndex = 0
     private var recordingStartTime = 0L
     private var isSavingEvent = false
-    private var shortSegmentSaving = false
     private var postEventRecordingActive = false
-    private var isScenario1 = false
     private var isStoppingService = false // Indica si la detención guarda y apaga
     private var eventTimestamp = 0L
     private var cameraInitAttempts = 0
     private val maxCameraInitAttempts = 3
+    private var hasCompletedSegment0 = false
+    private var hasCompletedSegment1 = false
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -279,8 +287,7 @@ class BackgroundCameraService : LifecycleService() {
         serviceState = ServiceState.STANDBY
         isSavingEvent = false
         postEventRecordingActive = false
-        shortSegmentSaving = false
-        isScenario1 = false
+        saveMode = SaveMode.SAVE_ONLY_CURR
         isStoppingService = false
         
         stopCircularBufferTimers()
@@ -492,9 +499,23 @@ class BackgroundCameraService : LifecycleService() {
     private fun startCircularBuffer() {
         isSavingEvent = false
         postEventRecordingActive = false
-        shortSegmentSaving = false
-        isScenario1 = false
+        saveMode = SaveMode.SAVE_ONLY_CURR
         isStoppingService = false
+        hasCompletedSegment0 = false
+        hasCompletedSegment1 = false
+        
+        // Limpiar archivos temporales de caché para evitar duplicados en eventos seguidos
+        try {
+            val f0 = File(cacheDir, "segment_0.mp4")
+            if (f0.exists()) Log.d(TAG, "Eliminando segment_0: ${f0.delete()}")
+            val f1 = File(cacheDir, "segment_1.mp4")
+            if (f1.exists()) Log.d(TAG, "Eliminando segment_1: ${f1.delete()}")
+            val fPost = File(cacheDir, "segment_post.mp4")
+            if (fPost.exists()) Log.d(TAG, "Eliminando segment_post: ${fPost.delete()}")
+            Log.d(TAG, "Caché de segmentos de vídeo limpiada con éxito.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al limpiar caché de segmentos: ${e.message}")
+        }
         
         sendStatusUpdate("INICIANDO DUOVIAL")
         startRecordingSegment(0)
@@ -543,9 +564,26 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
+        val index = currentRecordingIndex
+        if (event.hasError()) {
+            Log.e(TAG, "Grabación finalizada con error: Código ${event.error}, Causa: ${event.cause?.message}")
+        } else {
+            Log.d(TAG, "Grabación de segmento finalizada con éxito.")
+        }
+
         if (!isSavingEvent) {
             // El primer frame se completó con éxito, pasamos a vigilancia activa estable.
             sendStatusUpdate("DUOVIAL ACTIVO")
+            
+            if (!event.hasError()) {
+                if (index == 0) {
+                    hasCompletedSegment0 = true
+                    Log.d(TAG, "Segmento 0 marcado como COMPLETADO.")
+                } else if (index == 1) {
+                    hasCompletedSegment1 = true
+                    Log.d(TAG, "Segmento 1 marcado como COMPLETADO.")
+                }
+            }
             
             val nextIndex = 1 - currentRecordingIndex
             startRecordingSegment(nextIndex)
@@ -588,28 +626,24 @@ class BackgroundCameraService : LifecycleService() {
         Log.d(TAG, "Guardando evento. Duración del segmento actual: $duration ms")
         
         val prevIndex = 1 - currentRecordingIndex
-        val prevFile = File(cacheDir, "segment_$prevIndex.mp4")
-        val hasCompletedPrevFile = prevFile.exists() && prevFile.length() > 500000L
+        val hasCompletedPrevFile = if (prevIndex == 0) hasCompletedSegment0 else hasCompletedSegment1
+        Log.d(TAG, "hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
         
         if (!hasCompletedPrevFile) {
-            // ESCENARIO 1: Ocurre antes de completarse el primer frame
-            isScenario1 = true
-            shortSegmentSaving = true
-            sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
-            currentActiveRecording?.stop()
+            saveMode = SaveMode.SCENARIO_1
         } else {
-            // ESCENARIO 2: Existe un frame previo completo
-            isScenario1 = false
-            if (duration < 14000) {
-                shortSegmentSaving = true
-                sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
-                currentActiveRecording?.stop()
+            if (duration < 3000) {
+                saveMode = SaveMode.SAVE_ONLY_PREV
+            } else if (duration < 14000) {
+                saveMode = SaveMode.SAVE_PREV_AND_CURR
             } else {
-                shortSegmentSaving = false
-                sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
-                currentActiveRecording?.stop()
+                saveMode = SaveMode.SAVE_ONLY_CURR
             }
         }
+        
+        Log.d(TAG, "Modo de guardado de evento establecido: $saveMode")
+        sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
+        currentActiveRecording?.stop()
     }
 
     /**
@@ -630,17 +664,22 @@ class BackgroundCameraService : LifecycleService() {
         val duration = System.currentTimeMillis() - recordingStartTime
         
         val prevIndex = 1 - currentRecordingIndex
-        val prevFile = File(cacheDir, "segment_$prevIndex.mp4")
-        val hasCompletedPrevFile = prevFile.exists() && prevFile.length() > 500000L
+        val hasCompletedPrevFile = if (prevIndex == 0) hasCompletedSegment0 else hasCompletedSegment1
+        Log.d(TAG, "stopAndSave: hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
         
         if (!hasCompletedPrevFile) {
-            isScenario1 = true
-            shortSegmentSaving = true
+            saveMode = SaveMode.SCENARIO_1
         } else {
-            isScenario1 = false
-            shortSegmentSaving = duration < 14000
+            if (duration < 3000) {
+                saveMode = SaveMode.SAVE_ONLY_PREV
+            } else if (duration < 14000) {
+                saveMode = SaveMode.SAVE_PREV_AND_CURR
+            } else {
+                saveMode = SaveMode.SAVE_ONLY_CURR
+            }
         }
         
+        Log.d(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
         sendStatusUpdate("INICIANDO DUOVIAL") // Mostrar animación de guardado final
         currentActiveRecording?.stop()
     }
@@ -661,7 +700,13 @@ class BackgroundCameraService : LifecycleService() {
             startPostEventRecording()
         } else {
             // Fin de la grabación de post-evento normal
-            val finalPartIndex = if (isScenario1) 1 else (if (shortSegmentSaving) 2 else 1)
+            val finalPartIndex = when (saveMode) {
+                SaveMode.SCENARIO_1 -> 1
+                SaveMode.SAVE_ONLY_PREV -> 1
+                SaveMode.SAVE_ONLY_CURR -> 1
+                SaveMode.SAVE_PREV_AND_CURR -> 2
+                else -> 1
+            }
             copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_part$finalPartIndex.mp4")
             
             Log.i(TAG, "✅ Incidente guardado con éxito. Reanudando buffer circular...")
@@ -675,14 +720,19 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     private fun savePreEventSegments() {
-        if (isScenario1) {
-            copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
-        } else {
-            if (shortSegmentSaving) {
-                val prevIndex = 1 - currentRecordingIndex
+        val prevIndex = 1 - currentRecordingIndex
+        when (saveMode) {
+            SaveMode.SCENARIO_1 -> {
+                copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+            }
+            SaveMode.SAVE_PREV_AND_CURR -> {
                 copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
                 copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part1.mp4")
-            } else {
+            }
+            SaveMode.SAVE_ONLY_PREV -> {
+                copyFileToDownloads("segment_$prevIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
+            }
+            SaveMode.SAVE_ONLY_CURR -> {
                 copyFileToDownloads("segment_$currentRecordingIndex.mp4", "incident_${eventTimestamp}_part0.mp4")
             }
         }
