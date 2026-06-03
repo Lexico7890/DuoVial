@@ -16,6 +16,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('Monitor');
   const [status, setStatus] = useState('INACTIVO');
   const [gForce, setGForce] = useState(1.00);
+  const [speed, setSpeed] = useState(0);
   
   // Estado para el control estricto de permisos y evitar la pantalla negra de primer inicio
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
@@ -28,6 +29,8 @@ export default function App() {
     if (Platform.OS === 'android') {
       const permissions = [
         PermissionsAndroid.PERMISSIONS.CAMERA,
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
       ];
 
       if (Platform.Version >= 33) {
@@ -76,9 +79,15 @@ export default function App() {
       setGForce(event.gForce);
     });
 
+    // 3. Velocidad en tiempo real (velocímetro)
+    const speedSubscription = DeviceEventEmitter.addListener('onSpeedChanged', (event) => {
+      setSpeed(Math.round(event.speed));
+    });
+
     return () => {
       statusSubscription.remove();
       accelSubscription.remove();
+      speedSubscription.remove();
     };
   }, []);
 
@@ -125,7 +134,7 @@ export default function App() {
         {/* Telemetry Dashboard Card (G-Force & Speedometer) */}
         <View style={styles.telemetryCard}>
           <View style={styles.telemetryItem}>
-            <Text style={styles.telemetryValue}>0</Text>
+            <Text style={styles.telemetryValue}>{speed}</Text>
             <Text style={styles.telemetryLabel}>MPH</Text>
           </View>
           <View style={styles.telemetryDivider} />

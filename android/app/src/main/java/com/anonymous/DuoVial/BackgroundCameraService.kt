@@ -29,6 +29,11 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.content.pm.PackageManager
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -57,6 +62,7 @@ import java.io.OutputStream
 interface CameraStatusListener {
     fun onStatusChanged(status: String)
     fun onAccelChanged(gForce: Double)
+    fun onSpeedChanged(speed: Double)
 }
 
 /**
@@ -110,6 +116,9 @@ class BackgroundCameraService : LifecycleService() {
     private var accelSensor: Sensor? = null
     private var lastAccelUpdateTime = 0L
 
+    // GPS / Location Manager
+    private var locationManager: LocationManager? = null
+
     // Cooldown para Triggers (12 segundos)
     private var lastEventTriggerTime = 0L
 
@@ -161,6 +170,17 @@ class BackgroundCameraService : LifecycleService() {
             }
         }
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
+    // Listener de ubicación (velocímetro)
+    private val locationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            val speedMph = location.speed * 2.23694
+            statusListener?.onSpeedChanged(speedMph)
+        }
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
     }
 
     override fun onCreate() {
@@ -338,11 +358,13 @@ class BackgroundCameraService : LifecycleService() {
             .build()
             
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID, 
-                notification, 
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            )
+            var serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            val hasFine = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (hasFine || hasCoarse) {
+                serviceType = serviceType or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            }
+            startForeground(NOTIFICATION_ID, notification, serviceType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -767,6 +789,7 @@ class BackgroundCameraService : LifecycleService() {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
                 Log.d(TAG, "Acelerómetro registrado.")
             }
+            startLocationUpdates()
         } catch (e: Exception) {
             Log.e(TAG, "Error al registrar acelerómetro: ${e.message}")
         }
@@ -774,6 +797,76 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun stopSensors() {
         sensorManager?.unregisterListener(accelListener)
+        stopLocationUpdates()
+    }
+
+    private fun startLocationUpdates() {
+        try {
+            val hasFine = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (hasFine || hasCoarse) {
+                // Si estamos en Android Q+, actualizar el tipo de Foreground Service para incluir LOCATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
+                    val pendingIntent = PendingIntent.getActivity(
+                        this,
+                        0,
+                        notificationIntent,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    )
+                    val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                        .setContentTitle("DuoVial")
+                        .setContentText(if (serviceState == ServiceState.RECORDING) "Grabación circular activa." else "Cámara lista.")
+                        .setSmallIcon(android.R.drawable.presence_video_online)
+                        .setContentIntent(pendingIntent)
+                        .setOngoing(true)
+                        .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                        .build()
+
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    )
+                }
+
+                locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
+                    locationManager?.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        1000L,
+                        0f,
+                        locationListener
+                    )
+                    Log.w(TAG, "GPS Provider registrado para velocímetro.")
+                }
+                if (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true) {
+                    locationManager?.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        1000L,
+                        0f,
+                        locationListener
+                    )
+                    Log.w(TAG, "Network Provider registrado para velocímetro.")
+                }
+            } else {
+                Log.e(TAG, "Sin permisos de GPS — no se puede iniciar velocímetro.")
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Error de seguridad al iniciar velocímetro: ${e.message}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al iniciar velocímetro: ${e.message}")
+        }
+    }
+
+    private fun stopLocationUpdates() {
+        try {
+            locationManager?.removeUpdates(locationListener)
+            Log.w(TAG, "Velocímetro desvinculado con éxito.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al detener actualizaciones de ubicación: ${e.message}")
+        }
     }
 
     // ==========================================

@@ -33,6 +33,9 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
             override fun onAccelChanged(gForce: Double) {
                 sendAccelEventToJS(gForce)
             }
+            override fun onSpeedChanged(speed: Double) {
+                sendSpeedEventToJS(speed)
+            }
         }
         Log.d(TAG, "statusListener estático vinculado con éxito.")
     }
@@ -70,6 +73,19 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
                 .emit("onAccelChanged", params)
         } catch (e: Exception) {
             // Ignorar para evitar spam
+        }
+    }
+
+    private fun sendSpeedEventToJS(speed: Double) {
+        try {
+            val params = Arguments.createMap().apply {
+                putDouble("speed", speed)
+            }
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onSpeedChanged", params)
+        } catch (e: Exception) {
+            // Ignorar
         }
     }
 
