@@ -40,6 +40,7 @@ export class BackgroundGuard {
           taskKey: this.watchdogKey,
           type: SchedulerTypes.periodic,
           syncInterval: 15,
+          syncFlexTime: 5,
           allowedInForeground: true,
         },
         async () => {

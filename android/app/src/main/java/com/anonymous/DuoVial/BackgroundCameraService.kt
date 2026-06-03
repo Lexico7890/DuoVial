@@ -32,6 +32,9 @@ import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.Lifecycle
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -79,6 +82,7 @@ class BackgroundCameraService : LifecycleService() {
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var currentActiveRecording: Recording? = null
+    private var cameraReady = false // Flag para saber si CameraX terminó de inicializarse
 
     // Variables del buffer circular
     private var currentRecordingIndex = 0
@@ -93,6 +97,13 @@ class BackgroundCameraService : LifecycleService() {
     private val maxCameraInitAttempts = 3
 
     private val handler = Handler(Looper.getMainLooper())
+
+    // LifecycleOwner personalizado para CameraX.
+    // LifecycleService solo llega a STARTED — CameraX Preview necesita RESUMED para producir frames.
+    private val cameraLifecycleOwner = object : LifecycleOwner {
+        val registry = LifecycleRegistry(this)
+        override val lifecycle: Lifecycle get() = registry
+    }
 
     // Acelerómetro nativo
     private var sensorManager: SensorManager? = null
@@ -209,6 +220,10 @@ class BackgroundCameraService : LifecycleService() {
         activePreview = null
         
         cameraProvider?.unbindAll()
+        
+        // Destruir el lifecycle personalizado de CameraX
+        cameraLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
+        
         statusListener?.onStatusChanged("INACTIVO")
         super.onDestroy()
     }
@@ -267,8 +282,16 @@ class BackgroundCameraService : LifecycleService() {
         serviceState = ServiceState.RECORDING
         
         updateNotification("🎥 DuoVial - Vigilando", "Grabación circular activa en segundo plano.")
-        startCircularBuffer()
         startSensors()
+        
+        // Solo arrancar el buffer si CameraX ya terminó de inicializarse.
+        // Si no, startCameraX() lo arrancará automáticamente cuando termine.
+        if (cameraReady) {
+            startCircularBuffer()
+        } else {
+            Log.w(TAG, "CameraX aún no está lista. El buffer circular arrancará cuando termine la inicialización.")
+            sendStatusUpdate("INICIANDO DUOVIAL")
+        }
     }
 
     fun onPreviewViewDropped() {
@@ -392,21 +415,42 @@ class BackgroundCameraService : LifecycleService() {
                     } catch (e: Exception) {
                         Log.e(TAG, "Error al vincular vista: ${e.message}")
                     }
+                } else {
+                    Log.w(TAG, "activePreviewView es null en startCameraX — el surface se vinculará cuando la vista se acople.")
                 }
                 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                 
                 cameraProvider?.unbindAll()
-                // Vincular AMBOS (Preview y VideoCapture) juntos para evitar session re-configurations
+                
+                // Llevar el lifecycle personalizado a RESUMED para que CameraX active el Preview.
+                // LifecycleService solo llega a STARTED, lo cual NO es suficiente para Preview.
+                cameraLifecycleOwner.registry.currentState = Lifecycle.State.STARTED
+                cameraLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED
+                
+                // Vincular AMBOS (Preview y VideoCapture) al lifecycle personalizado en RESUMED
                 cameraProvider?.bindToLifecycle(
-                    this,
+                    cameraLifecycleOwner,
                     cameraSelector,
                     preview,
                     videoCapture
                 )
-                Log.d(TAG, "CameraX vinculada correctamente (Preview + VideoCapture).")
+                Log.d(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
+                cameraReady = true
                 
+                // Re-aplicar surface provider con retraso como red de seguridad
+                handler.postDelayed({
+                    val view = activePreviewView
+                    if (view != null && activePreview != null) {
+                        activePreview?.setSurfaceProvider(view.surfaceProvider)
+                        Log.d(TAG, "Surface provider re-aplicado con retraso de seguridad (500ms).")
+                    }
+                }, 500)
+                
+                // Si el modo RECORDING fue solicitado antes de que CameraX terminara,
+                // arrancar el buffer circular ahora que todo está listo.
                 if (serviceState == ServiceState.RECORDING) {
+                    Log.i(TAG, "CameraX lista y modo RECORDING pendiente. Arrancando buffer circular...")
                     startCircularBuffer()
                 } else {
                     sendStatusUpdate("INACTIVO")
