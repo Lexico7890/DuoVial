@@ -211,7 +211,7 @@ export default function App() {
                 style={{ marginRight: 8 }}
               />
               <Text style={styles.panicRectButtonText}>
-                {isSaving ? "GUARDANDO..." : "⚠️ GATILLAR EVENTO (PÁNICO)"}
+                {isSaving ? "GUARDANDO..." : "Crear Evento"}
               </Text>
             </TouchableOpacity>
             
