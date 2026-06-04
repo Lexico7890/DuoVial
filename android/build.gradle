@@ -18,6 +18,11 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    // Local Maven repos for Expo bundled modules (fallback for EAS Build)
+    maven { url "${rootDir}/../node_modules/expo/node_modules/expo-asset/local-maven-repo" }
+    maven { url "${rootDir}/../node_modules/expo/node_modules/expo-file-system/local-maven-repo" }
+    maven { url "${rootDir}/../node_modules/expo/node_modules/expo-font/local-maven-repo" }
+    maven { url "${rootDir}/../node_modules/expo/node_modules/expo-keep-awake/local-maven-repo" }
   }
 }
 
