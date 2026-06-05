@@ -12,6 +12,7 @@
   "dependencies": {
     "@rn-native-utils/workmanager": "^0.1.0",
     "@supersami/rn-foreground-service": "^2.2.5",
+    "aws-amplify": "^6.17.0",
     "expo": "~54.0.33",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",

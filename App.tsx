@@ -2,21 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
-import { StatusCard } from './src/components/StatusCard';
 import { BottomNav } from './src/components/BottomNav';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { requireNativeComponent } from 'react-native';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
+import { AuthProvider, useAuth } from './src/services/AuthContext';
+import { configureAuth } from './src/services/AuthConfig';
+import { LoginScreen } from './src/components/LoginScreen';
+
+configureAuth();
 
 // Cargar el componente de Preview nativo expuesto por Kotlin
 const BackgroundCameraPreview = requireNativeComponent('BackgroundCameraPreview');
 
-export default function App() {
+function AppContent() {
   const [activeTab, setActiveTab] = useState('Monitor');
   const [status, setStatus] = useState('INACTIVO');
   const [gForce, setGForce] = useState(1.00);
   const [speed, setSpeed] = useState(0);
+  const [showLogin, setShowLogin] = useState(false);
+  const { user, logout, loading: authLoading } = useAuth();
   
   // Estado para el control estricto de permisos y evitar la pantalla negra de primer inicio
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
@@ -263,9 +269,75 @@ export default function App() {
   };
 
   // ==========================================
-  // RENDER PESTAÑA: AJUSTES (SENSORES & PIP)
+  // RENDER PESTAÑA: CUENTA
   // ==========================================
-  const renderAjustes = () => {
+  const renderCuenta = () => {
+    if (authLoading) {
+      return (
+        <View style={[styles.tabContent, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="large" color={colors.neonGreen} />
+        </View>
+      );
+    }
+
+    if (user) {
+      return (
+        <View style={styles.tabContent}>
+          <View style={styles.headerSpacer}>
+            <Text style={styles.tabTitle}>Mi Cuenta</Text>
+            <Text style={styles.tabSubtitle}>Información de tu perfil</Text>
+          </View>
+          <View style={styles.settingsList}>
+            <View style={styles.settingCard}>
+              <View style={styles.settingHeader}>
+                <MaterialCommunityIcons name="account-circle" size={24} color={colors.neonGreen} />
+                <Text style={styles.settingTitle}>{user.email || user.username}</Text>
+              </View>
+              <Text style={styles.settingDescription}>
+                Has iniciado sesión correctamente.
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={async () => { await logout(); }}
+                style={[styles.actionButton, { borderColor: colors.neonRed }]}
+              >
+                <Text style={[styles.actionButtonText, { color: colors.neonRed }]}>CERRAR SESIÓN</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.tabContent}>
+        <View style={styles.headerSpacer}>
+          <Text style={styles.tabTitle}>Cuenta</Text>
+          <Text style={styles.tabSubtitle}>Inicia sesión para sincronizar tus datos</Text>
+        </View>
+        <View style={[styles.emptyGalleryContainer, { marginBottom: 0 }]}>
+          <MaterialCommunityIcons name="account-lock" size={60} color={colors.surface} />
+          <Text style={styles.emptyGalleryText}>Sin sesión iniciada</Text>
+          <Text style={styles.emptyGallerySubtext}>
+            Inicia sesión para acceder a funciones premium y sincronización en la nube.
+          </Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setShowLogin(true)}
+            style={[styles.primaryButton, { marginTop: 24 }]}
+          >
+            <Text style={styles.primaryButtonText}>INICIAR SESIÓN</Text>
+          </TouchableOpacity>
+        </View>
+        {showLogin && <LoginScreen onClose={() => setShowLogin(false)} />}
+      </View>
+    );
+  };
+
+  // ==========================================
+  // RENDER PESTAÑA: CONFIGURACIONES
+  // ==========================================
+  const renderConfiguraciones = () => {
     return (
       <View style={styles.tabContent}>
         <View style={styles.headerSpacer}>
@@ -338,7 +410,8 @@ export default function App() {
         {/* Render Tab Dinámico */}
         {activeTab === 'Monitor' && renderMonitor()}
         {activeTab === 'Eventos' && renderEventos()}
-        {activeTab === 'Ajustes' && renderAjustes()}
+        {activeTab === 'Configuraciones' && renderConfiguraciones()}
+        {activeTab === 'Cuenta' && renderCuenta()}
 
         {/* Barra de Navegación del Menú Principal */}
         <View style={styles.bottomNavContainer}>
@@ -372,20 +445,42 @@ export default function App() {
           
           <TouchableOpacity 
             style={styles.navTab}
-            onPress={() => setActiveTab('Ajustes')}
+            onPress={() => setActiveTab('Configuraciones')}
           >
             <MaterialCommunityIcons 
               name="cog-outline" 
               size={24} 
-              color={activeTab === 'Ajustes' ? colors.neonGreen : colors.textSecondary} 
+              color={activeTab === 'Configuraciones' ? colors.neonGreen : colors.textSecondary} 
             />
-            <Text style={[styles.navLabel, { color: activeTab === 'Ajustes' ? colors.neonGreen : colors.textSecondary }]}>
-              Ajustes
+            <Text style={[styles.navLabel, { color: activeTab === 'Configuraciones' ? colors.neonGreen : colors.textSecondary }]}>
+              Configurar
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.navTab}
+            onPress={() => setActiveTab('Cuenta')}
+          >
+            <MaterialCommunityIcons 
+              name="account-outline" 
+              size={24} 
+              color={activeTab === 'Cuenta' ? colors.neonGreen : colors.textSecondary} 
+            />
+            <Text style={[styles.navLabel, { color: activeTab === 'Cuenta' ? colors.neonGreen : colors.textSecondary }]}>
+              Cuenta
             </Text>
           </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
@@ -798,6 +893,20 @@ const styles = StyleSheet.create({
   actionButtonText: {
     color: '#FF9F0A',
     fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  primaryButton: {
+    backgroundColor: colors.neonGreen,
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButtonText: {
+    color: colors.background,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1,
   },
