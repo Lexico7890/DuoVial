@@ -89,4 +89,26 @@ export class BackgroundGuard {
       BackgroundCameraModule.requestOverlayPermission();
     }
   }
+
+  /**
+   * Setea el umbral de G-Force para la detección de colisiones.
+   * Si el Service aún no está vivo, el valor queda pendiente y se aplica al
+   * arrancar. Rango válido: 1.5..5.0 (ignorado fuera de rango).
+   */
+  static setGForceThreshold(threshold: number) {
+    if (BackgroundCameraModule && BackgroundCameraModule.setGForceThreshold) {
+      BackgroundCameraModule.setGForceThreshold(threshold);
+    }
+  }
+
+  /**
+   * Lee el umbral de G-Force actual del Service. Útil para que la UI muestre
+   * el valor real tras un reinicio, no un valor hardcodeado en JS.
+   */
+  static async getGForceThreshold(): Promise<number> {
+    if (BackgroundCameraModule && BackgroundCameraModule.getGForceThreshold) {
+      return await BackgroundCameraModule.getGForceThreshold();
+    }
+    return 2.5;
+  }
 }

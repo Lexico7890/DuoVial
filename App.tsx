@@ -1,10 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, ComponentType } from 'react';
+import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator, requireNativeComponent, ViewProps } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
-import { BottomNav } from './src/components/BottomNav';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { requireNativeComponent } from 'react-native';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
 import { AuthProvider, useAuth } from './src/services/AuthContext';
@@ -13,8 +11,9 @@ import { LoginScreen } from './src/components/LoginScreen';
 
 configureAuth();
 
-// Cargar el componente de Preview nativo expuesto por Kotlin
-const BackgroundCameraPreview = requireNativeComponent('BackgroundCameraPreview');
+// Componente nativo expuesto por Kotlin (Paper ViewManager).
+// Migrar a Fabric con codegen completo en cuanto se estabilice.
+const BackgroundCameraPreview: ComponentType<ViewProps> = requireNativeComponent('BackgroundCameraPreview');
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState('Monitor');
@@ -29,6 +28,17 @@ function AppContent() {
 
   const isRecording = status !== 'INACTIVO';
   const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO') || status.includes('GENERANDO') || status === 'INICIANDO DUOVIAL';
+
+  // Umbral G-Force real (única fuente de verdad: el Service). Se inicializa
+  // con 2.5G como fallback y se sincroniza al montar para reflejar el valor
+  // que el Service tenga (importante tras un reinicio del proceso nativo).
+  const [gForceThreshold, setGForceThresholdState] = useState<number>(2.5);
+
+  useEffect(() => {
+    BackgroundGuard.getGForceThreshold()
+      .then((value) => setGForceThresholdState(value))
+      .catch(() => { /* fallback ya seteado */ });
+  }, [hasCameraPermission]);
 
   // Función para solicitar permisos de forma segura
   const requestInitialPermissions = async () => {
@@ -61,16 +71,17 @@ function AppContent() {
     requestInitialPermissions();
   }, []);
 
-  // Iniciar la cámara en modo Standby apenas se concedan los permisos y el usuario esté en el Monitor
+  // Iniciar la cámara en modo Standby apenas se concedan los permisos.
+  // Importante: NO esperamos a la pestaña Monitor. El Service debe estar vivo
+  // ANTES de que el PreviewView se monte en JSX, para evitar que el ViewManager
+  // cree un Preview local paralelo (que luego sería destruido por el Service al
+  // hacer unbindAll(), causando pantalla negra parpadeante).
   useEffect(() => {
-    if (activeTab === 'Monitor' && hasCameraPermission === true) {
-      console.log('JS: Monitor activo y permisos concedidos. Iniciando cámara en Standby con retraso de seguridad...');
-      const timer = setTimeout(() => {
-        BackgroundGuard.startStandby();
-      }, 250);
-      return () => clearTimeout(timer);
+    if (hasCameraPermission === true) {
+      console.log('JS: Permisos concedidos. Iniciando cámara en Standby (arranque temprano).');
+      BackgroundGuard.startStandby();
     }
-  }, [activeTab, hasCameraPermission]);
+  }, [hasCameraPermission]);
 
   // Escuchar eventos nativos en tiempo real desde el servicio en Kotlin
   useEffect(() => {
@@ -146,9 +157,9 @@ function AppContent() {
           <View style={styles.telemetryDivider} />
           <View style={styles.telemetryItemRight}>
             <Text style={styles.telemetryLabelUpper}>GRAVITATIONAL FORCE</Text>
-            <View style={styles.gForceValueContainer}>
+              <View style={styles.gForceValueContainer}>
               <Text style={styles.gForceValue}>{gForce.toFixed(2)}G</Text>
-              <Text style={styles.gForceThreshold}>/ 2.5 threshold</Text>
+              <Text style={styles.gForceThreshold}>/ {gForceThreshold.toFixed(1)} threshold</Text>
             </View>
           </View>
         </View>
@@ -385,14 +396,47 @@ function AppContent() {
               <Text style={styles.settingTitle}>Sensibilidad del Acelerómetro</Text>
             </View>
             <Text style={styles.settingDescription}>
-              El umbral actual es de 2.5G (fijado nativamente para colisiones violentas y evitar falsos positivos).
+              Umbral actual: {gForceThreshold.toFixed(1)}G. Valor configurable entre 1.5G (muy sensible) y 5.0G (sólo colisiones muy violentas). Por defecto 2.5G.
             </Text>
             <View style={styles.mockSliderContainer}>
               <View style={styles.mockSliderBg}>
-                <View style={styles.mockSliderProgress} />
-                <View style={styles.mockSliderKnob} />
+                {/* Mapea 1.5G..5.0G → 0%..100% */}
+                <View
+                  style={[
+                    styles.mockSliderProgress,
+                    { width: `${Math.max(0, Math.min(100, ((gForceThreshold - 1.5) / 3.5) * 100))}%` },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.mockSliderKnob,
+                    { left: `${Math.max(0, Math.min(100, ((gForceThreshold - 1.5) / 3.5) * 100))}%` },
+                  ]}
+                />
               </View>
-              <Text style={styles.sliderLabel}>2.5G (Recomendado)</Text>
+              <View style={styles.thresholdActions}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const next = Math.max(1.5, +(gForceThreshold - 0.1).toFixed(1));
+                    setGForceThresholdState(next);
+                    BackgroundGuard.setGForceThreshold(next);
+                  }}
+                  style={styles.thresholdBtn}
+                >
+                  <MaterialCommunityIcons name="minus" size={16} color={colors.neonGreen} />
+                </TouchableOpacity>
+                <Text style={styles.sliderLabel}>{gForceThreshold.toFixed(1)}G</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    const next = Math.min(5.0, +(gForceThreshold + 0.1).toFixed(1));
+                    setGForceThresholdState(next);
+                    BackgroundGuard.setGForceThreshold(next);
+                  }}
+                  style={styles.thresholdBtn}
+                >
+                  <MaterialCommunityIcons name="plus" size={16} color={colors.neonGreen} />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -945,6 +989,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 10,
     textAlign: 'right',
+  },
+  thresholdActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  thresholdBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: colors.neonGreen,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.greenDim,
   },
   // --- BOTTOM NAV BAR ---
   bottomNavContainer: {

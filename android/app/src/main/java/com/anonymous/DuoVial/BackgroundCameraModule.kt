@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -92,6 +93,10 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
     @ReactMethod
     fun startStandby() {
         Log.d(TAG, "Iniciando cámara en modo Standby desde JS...")
+        // Bandera anti-race: la subimos ANTES de enviar el intent. El Service
+        // la baja síncronamente en onCreate. Mientras esté arriba, el
+        // ViewManager NO crea un Preview local paralelo.
+        BackgroundCameraService.markServiceStarting()
         val context = reactApplicationContext
         val intent = Intent(context, BackgroundCameraService::class.java).apply {
             action = "ACTION_START_STANDBY"
@@ -99,6 +104,11 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
         try {
             ContextCompat.startForegroundService(context, intent)
         } catch (e: Exception) {
+            // Si startForegroundService falla, dejamos la bandera en true como
+            // seguridad: el siguiente intento de startStandby/startRecording
+            // podrá sobrescribirla. Pero también la bajamos para no dejar
+            // al ViewManager bloqueado si el Service no va a llegar.
+            BackgroundCameraService.clearServiceStarting()
             Log.e(TAG, "Error al arrancar el servicio de cámara en modo Standby: ${e.message}")
         }
     }
@@ -106,6 +116,7 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
     @ReactMethod
     fun startRecording() {
         Log.d(TAG, "Iniciando grabación en segundo plano desde JS...")
+        BackgroundCameraService.markServiceStarting()
         val context = reactApplicationContext
         val intent = Intent(context, BackgroundCameraService::class.java).apply {
             action = "ACTION_START_RECORDING"
@@ -114,6 +125,7 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
             ContextCompat.startForegroundService(context, intent)
             sendStatusEventToJS("INICIANDO DUOVIAL")
         } catch (e: Exception) {
+            BackgroundCameraService.clearServiceStarting()
             Log.e(TAG, "Error al arrancar el servicio de grabación de cámara nativo: ${e.message}")
         }
     }
@@ -164,5 +176,35 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
                 }
             }
         }
+    }
+
+    /**
+     * Setter del umbral de G-Force. Acepta un Double desde JS. Si el Service
+     * aún no está vivo, el valor se almacena en un pendingThreshold que se
+     * aplicará en el primer onCreate.
+     */
+    @ReactMethod
+    fun setGForceThreshold(threshold: Double) {
+        val service = BackgroundCameraService.instance
+        if (service != null) {
+            service.setGForceThreshold(threshold)
+        } else {
+            // Guardar para aplicar cuando el Service arranque
+            BackgroundCameraService.pendingGForceThreshold = threshold
+            Log.d(TAG, "Service no vivo; umbral pendiente: $threshold G")
+        }
+    }
+
+    /**
+     * Getter del umbral actual. Útil para que la UI muestre el valor real
+     * (no el hardcodeado en JS) tras un reinicio del Service.
+     */
+    @ReactMethod
+    fun getGForceThreshold(promise: Promise) {
+        val service = BackgroundCameraService.instance
+        val value = service?.getGForceThreshold()
+            ?: BackgroundCameraService.pendingGForceThreshold
+            ?: 2.5
+        promise.resolve(value)
     }
 }

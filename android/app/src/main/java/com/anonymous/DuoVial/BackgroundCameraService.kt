@@ -130,6 +130,11 @@ class BackgroundCameraService : LifecycleService() {
     // Cooldown para Triggers (12 segundos)
     private var lastEventTriggerTime = 0L
 
+    // Umbral de G-Force configurable desde JS. Default 2.5G para preservar
+    // el comportamiento histórico. El setter expuesto por el Module lo actualiza
+    // y se aplica a partir del próximo evento de sensor (no requiere reinicio).
+    @Volatile private var gForceThreshold: Double = 2.5
+
     // Elementos de la burbuja flotante
     private var windowManager: WindowManager? = null
     private var floatingBubbleView: View? = null
@@ -139,6 +144,24 @@ class BackgroundCameraService : LifecycleService() {
         var activePreview: Preview? = null
         var activePreviewView: PreviewView? = null
         var statusListener: CameraStatusListener? = null
+
+        // -- Sincronización Service ↔ ViewManager (anti race CameraX) --
+        // Bandera 100% JS-driven: la pone el Module ANTES de enviar el intent
+        // y la baja el Service de forma síncrona en onCreate. Mientras esté
+        // arriba, el ViewManager NO debe crear un Preview local paralelo.
+        @Volatile var serviceStarting: Boolean = false
+            private set
+
+        // View que llegó antes de que el Service tuviera su Preview listo.
+        // Se "vacía" automáticamente en startCameraX cuando cameraReady=true.
+        @Volatile var pendingPreviewView: PreviewView? = null
+
+        // Umbral G-Force pendiente de aplicar. Si JS llama al setter antes
+        // de que el Service exista, lo guardamos aquí y lo aplicamos en onCreate.
+        @Volatile var pendingGForceThreshold: Double? = null
+
+        internal fun markServiceStarting() { serviceStarting = true }
+        internal fun clearServiceStarting() { serviceStarting = false }
     }
 
     // Runnable para la rotación del buffer cada 15 segundos
@@ -171,8 +194,8 @@ class BackgroundCameraService : LifecycleService() {
                     statusListener?.onAccelChanged(gForce)
                 }
 
-                // Evaluar colisión > 2.5G
-                if (gForce > 2.5) {
+                // Evaluar colisión contra el umbral configurable
+                if (gForce > gForceThreshold) {
                     triggerCollisionEvent("Acelerómetro Impacto Detectado: ${String.format("%.2f", gForce)} G")
                 }
             }
@@ -195,6 +218,18 @@ class BackgroundCameraService : LifecycleService() {
         super.onCreate()
         Log.d(TAG, "Creando servicio de cámara...")
         instance = this
+        // Bajamos la bandera ANTES de cualquier otra cosa: a partir de aquí el
+        // ViewManager ya sabe que el Service está vivo y debe esperar su Preview.
+        clearServiceStarting()
+
+        // Aplicar umbral G-Force pendiente de JS (si JS lo seteó antes de que
+        // el Service existiera, por ejemplo durante un hot reload).
+        pendingGForceThreshold?.let {
+            gForceThreshold = it
+            pendingGForceThreshold = null
+            Log.i(TAG, "Aplicado umbral G-Force pendiente: $it G")
+        }
+
         startServiceNotification()
         startCameraX()
         startSensors()
@@ -257,7 +292,14 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     fun bindPreviewUseCase(previewView: PreviewView) {
-        val preview = activePreview ?: return
+        val preview = activePreview
+        if (preview == null) {
+            // El Preview aún no está listo. Encolamos; startCameraX() lo
+            // conectará automáticamente cuando termine la inicialización.
+            Log.i(TAG, "Preview aún no listo — encolando PreviewView como pendiente.")
+            pendingPreviewView = previewView
+            return
+        }
         Log.i(TAG, "Asociando SurfaceProvider al preview activo...")
         handler.post {
             try {
@@ -266,6 +308,25 @@ class BackgroundCameraService : LifecycleService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error al asociar SurfaceProvider: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Llamado por startCameraX() cuando la inicialización termina. Conecta el
+     * PreviewView pendiente (si lo hay) y limpia la cola. Es idempotente.
+     */
+    private fun flushPendingPreview() {
+        val view = pendingPreviewView ?: return
+        val preview = activePreview ?: return
+        Log.i(TAG, "Conectando PreviewView pendiente de la cola...")
+        try {
+            preview.setSurfaceProvider(view.surfaceProvider)
+            activePreviewView = view
+            Log.d(TAG, "Pending preview vaciado con éxito.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error vaciando pending preview: ${e.message}")
+        } finally {
+            pendingPreviewView = null
         }
     }
 
@@ -299,6 +360,22 @@ class BackgroundCameraService : LifecycleService() {
         updateNotification("DuoVial", "Cámara lista.")
         sendStatusUpdate("INACTIVO")
     }
+
+    /**
+     * Setter de umbral de G-Force invocable desde JS. El valor se aplica al
+     * siguiente sample del acelerómetro (no requiere reinicio de servicio).
+     * Rango válido: 1.5 .. 5.0 G. Valores fuera de rango se ignoran silenciosamente.
+     */
+    fun setGForceThreshold(threshold: Double) {
+        if (threshold < 1.5 || threshold > 5.0) {
+            Log.w(TAG, "Umbral G-Force fuera de rango (1.5..5.0): $threshold — ignorado.")
+            return
+        }
+        gForceThreshold = threshold
+        Log.i(TAG, "Umbral G-Force actualizado a $threshold G")
+    }
+
+    fun getGForceThreshold(): Double = gForceThreshold
 
     fun startRecordingMode() {
         if (serviceState == ServiceState.RECORDING) {
@@ -466,6 +543,11 @@ class BackgroundCameraService : LifecycleService() {
                 )
                 Log.d(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
                 cameraReady = true
+
+                // Vaciar la cola: si un View llegó antes de que el Preview estuviera
+                // listo, lo conectamos ahora. El ViewManager ya no debe crear
+                // un Preview local paralelo.
+                flushPendingPreview()
                 
                 // Re-aplicar surface provider con retraso como red de seguridad
                 handler.postDelayed({
