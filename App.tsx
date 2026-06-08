@@ -1,7 +1,8 @@
-import React, { useState, useEffect, ComponentType } from 'react';
-import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator, requireNativeComponent, ViewProps } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform, TouchableOpacity, Text, DeviceEventEmitter, ActivityIndicator } from 'react-native';
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
+import { MonitorScreen } from './src/components/MonitorScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
@@ -10,10 +11,6 @@ import { configureAuth } from './src/services/AuthConfig';
 import { LoginScreen } from './src/components/LoginScreen';
 
 configureAuth();
-
-// Componente nativo expuesto por Kotlin (Paper ViewManager).
-// Migrar a Fabric con codegen completo en cuanto se estabilice.
-const BackgroundCameraPreview: ComponentType<ViewProps> = requireNativeComponent('BackgroundCameraPreview');
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState('Monitor');
@@ -131,133 +128,24 @@ function AppContent() {
     await BackgroundGuard.stopGuarding();
   };
 
-  const getStatusColor = (currentStatus: string) => {
-    switch (currentStatus) {
-      case 'INACTIVO':
-        return colors.textSecondary;
-      case 'DUOVIAL ACTIVO':
-        return colors.neonGreen;
-      default: // INICIANDO DUOVIAL, GENERANDO CONTENIDO POST EVENTO, etc.
-        return '#FF9F0A'; // Ámbar
-    }
-  };
-
   // ==========================================
-  // RENDER PESTAÑA: MONITOR (DASHBOARD)
+  // RENDER PESTAÑA: MONITOR (DASHBOARD) — fullscreen cámara estilo Maps
   // ==========================================
-  const renderMonitor = () => {
-    return (
-      <View style={styles.tabContent}>
-        {/* Telemetry Dashboard Card (G-Force & Speedometer) */}
-        <View style={styles.telemetryCard}>
-          <View style={styles.telemetryItem}>
-            <Text style={styles.telemetryValue}>{speed}</Text>
-            <Text style={styles.telemetryLabel}>MPH</Text>
-          </View>
-          <View style={styles.telemetryDivider} />
-          <View style={styles.telemetryItemRight}>
-            <Text style={styles.telemetryLabelUpper}>GRAVITATIONAL FORCE</Text>
-              <View style={styles.gForceValueContainer}>
-              <Text style={styles.gForceValue}>{gForce.toFixed(2)}G</Text>
-              <Text style={styles.gForceThreshold}>/ {gForceThreshold.toFixed(1)} threshold</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Caja de texto informativa de estado en tiempo real */}
-        <View style={styles.statusBadgeContainer}>
-          <View style={[styles.statusDot, { backgroundColor: getStatusColor(status) }]} />
-          <Text style={[styles.statusBadgeText, { color: colors.textPrimary }]}>
-            {status === 'INACTIVO' ? 'VIGILANTE APAGADO - TOCA ENCENDER' : status}
-          </Text>
-        </View>
-
-        {/* Cámara Preview Recuadro (Road Scan Viewport) */}
-        <View style={[styles.previewContainer, isRecording && styles.previewContainerActive]}>
-          {hasCameraPermission === false ? (
-            <View style={styles.permissionCard}>
-              <MaterialCommunityIcons name="shield-lock-outline" size={40} color="#FF9F0A" />
-              <Text style={styles.permissionTitle}>Permiso de Cámara Requerido</Text>
-              <Text style={styles.permissionDesc}>
-                DuoVial necesita acceso a la cámara trasera para poder funcionar como DashCam.
-              </Text>
-              <TouchableOpacity 
-                activeOpacity={0.8}
-                onPress={requestInitialPermissions}
-                style={styles.permissionBtn}
-              >
-                <Text style={styles.permissionBtnText}>OTORGAR ACCESO</Text>
-              </TouchableOpacity>
-            </View>
-          ) : hasCameraPermission === null ? (
-            <View style={styles.previewStandby}>
-              <ActivityIndicator size="large" color={colors.neonGreen} />
-            </View>
-          ) : (
-            <View style={styles.previewViewport}>
-              <BackgroundCameraPreview style={StyleSheet.absoluteFill} />
-              {/* Indicador de grabación REC parpadeante */}
-              {isRecording && (
-                <View style={styles.recBadge}>
-                  <View style={styles.recDot} />
-                  <Text style={styles.recBadgeText}>REC</Text>
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-
-        {/* Controles de grabación (Panel rectangular de doble acción) */}
-        <View style={styles.controlsContainer}>
-          <View style={styles.controlsRowHorizontal}>
-            {/* Botón Rectangular Amarillo: Solo PÁNICO */}
-            <TouchableOpacity 
-              activeOpacity={0.8}
-              onPress={handleToggle}
-              disabled={isSaving || !isRecording}
-              style={[
-                styles.panicRectButton,
-                !isRecording && styles.panicRectButtonInactive,
-                isSaving && styles.panicRectButtonSaving
-              ]}
-            >
-              <MaterialCommunityIcons 
-                name={isSaving ? "progress-download" : "alert-decagram"} 
-                size={20} 
-                color="#000" 
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.panicRectButtonText}>
-                {isSaving ? "GUARDANDO..." : "Crear Evento"}
-              </Text>
-            </TouchableOpacity>
-            
-            {/* Botón de Encendido/Apagado del Vigilante (Verde/Rojo Rectangular) */}
-            <TouchableOpacity 
-              activeOpacity={0.8}
-              onPress={isRecording ? handleStop : handleStart}
-              disabled={isSaving}
-              style={[
-                styles.powerRectButton,
-                { backgroundColor: isRecording ? colors.neonRed : colors.neonGreen },
-                isSaving && styles.powerRectButtonDisabled
-              ]}
-            >
-              <MaterialCommunityIcons 
-                name={isRecording ? "stop" : "play"} 
-                size={18} 
-                color="#000" 
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.powerRectButtonText}>
-                {isRecording ? 'APAGAR' : 'ENCENDER'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  };
+  const renderMonitor = () => (
+    <MonitorScreen
+      status={status}
+      gForce={gForce}
+      speed={speed}
+      gForceThreshold={gForceThreshold}
+      hasCameraPermission={hasCameraPermission}
+      isRecording={isRecording}
+      isSaving={isSaving}
+      onRequestPermissions={requestInitialPermissions}
+      onStart={handleStart}
+      onStop={handleStop}
+      onToggle={handleToggle}
+    />
+  );
 
   // ==========================================
   // RENDER PESTAÑA: EVENTOS (GALERÍA CLIPS)
@@ -448,8 +336,9 @@ function AppContent() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
       <View style={styles.container}>
-        {/* Header Section */}
-        <SystemHeader />
+        {/* Header legacy — sólo visible en pestañas que no son Monitor. En Monitor
+            el header está integrado dentro de MonitorScreen (flotante con glass). */}
+        {activeTab !== 'Monitor' && <SystemHeader />}
 
         {/* Render Tab Dinámico */}
         {activeTab === 'Monitor' && renderMonitor()}
@@ -556,301 +445,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 12,
     marginTop: 4,
-  },
-  // --- TELEMETRY CARD ---
-  telemetryCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 20,
-    marginHorizontal: 20,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  telemetryItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 15,
-  },
-  telemetryValue: {
-    color: colors.textPrimary,
-    fontSize: 32,
-    fontWeight: '900',
-  },
-  telemetryLabel: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  telemetryDivider: {
-    width: 1.5,
-    height: '75%',
-    backgroundColor: colors.border,
-    marginHorizontal: 10,
-  },
-  telemetryItemRight: {
-    flex: 1,
-    paddingLeft: 10,
-  },
-  telemetryLabelUpper: {
-    color: colors.textSecondary,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  gForceValueContainer: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginTop: 4,
-  },
-  gForceValue: {
-    color: colors.textPrimary,
-    fontSize: 28,
-    fontWeight: '900',
-  },
-  gForceThreshold: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    marginLeft: 6,
-    fontWeight: '600',
-  },
-  // --- STATUS BADGE ---
-  statusBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 20,
-    marginTop: 15,
-    marginBottom: 10,
-    paddingHorizontal: 6,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 10,
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-  },
-  // --- PREVIEW CONTAINER ---
-  previewContainer: {
-    height: 355,
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 22,
-    marginHorizontal: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  previewContainerActive: {
-    borderColor: 'rgba(0, 250, 154, 0.15)',
-    shadowColor: colors.neonGreen,
-    shadowOpacity: 0.1,
-  },
-  previewViewport: {
-    flex: 1,
-    position: 'relative',
-  },
-  recBadge: {
-    position: 'absolute',
-    top: 15,
-    left: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 42, 85, 0.4)',
-  },
-  recDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.neonRed,
-    marginRight: 6,
-  },
-  recBadgeText: {
-    color: colors.textPrimary,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  previewStandby: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  previewStandbyText: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginTop: 12,
-  },
-  previewStandbySubtext: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  // --- PERMISSION CARD ---
-  permissionCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 30,
-    backgroundColor: 'rgba(18, 24, 27, 0.95)',
-  },
-  permissionTitle: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '800',
-    marginTop: 10,
-    letterSpacing: 0.5,
-  },
-  permissionDesc: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 16,
-  },
-  permissionBtn: {
-    backgroundColor: 'rgba(255, 215, 0, 0.1)',
-    borderWidth: 1.5,
-    borderColor: '#FFD700',
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    marginTop: 15,
-  },
-  permissionBtnText: {
-    color: '#FFD700',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  // --- CONTROLS ROW ---
-  controlsContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    paddingHorizontal: 20,
-  },
-  controlsRowHorizontal: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    paddingHorizontal: 20,
-    marginTop: 10,
-  },
-  panicRectButton: {
-    flex: 2.2,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: '#FFD700',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    elevation: 6,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    shadowColor: '#FFD700',
-  },
-  panicRectButtonInactive: {
-    backgroundColor: '#3A3F42',
-    shadowOpacity: 0,
-    elevation: 0,
-    opacity: 0.6,
-  },
-  panicRectButtonSaving: {
-    backgroundColor: '#FF9F0A',
-    shadowColor: '#FF9F0A',
-  },
-  panicRectButtonText: {
-    color: '#000',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  powerRectButton: {
-    flex: 1.1,
-    height: 56,
-    borderRadius: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    shadowColor: '#000',
-  },
-  powerRectButtonDisabled: {
-    backgroundColor: colors.border,
-    opacity: 0.4,
-    elevation: 0,
-    shadowOpacity: 0,
-  },
-  powerRectButtonText: {
-    color: '#000',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  stopButton: {
-    marginTop: 15,
-    backgroundColor: 'rgba(255, 42, 85, 0.1)',
-    borderWidth: 1.5,
-    borderColor: colors.neonRed,
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 30,
-    shadowColor: colors.neonRed,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  stopButtonDisabled: {
-    borderColor: colors.border,
-    backgroundColor: 'rgba(30, 41, 59, 0.1)',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  stopButtonText: {
-    color: colors.neonRed,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 2,
   },
   // --- GALLERY VIEW ---
   emptyGalleryContainer: {

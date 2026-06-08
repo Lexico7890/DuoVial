@@ -232,7 +232,10 @@ class BackgroundCameraService : LifecycleService() {
 
         startServiceNotification()
         startCameraX()
-        startSensors()
+        // Location SIEMPRE activa desde onCreate — el velocímetro debe funcionar
+        // también en Standby (el acelerómetro se inicia con startSensors() sólo
+        // cuando se entra a RECORDING para ahorrar batería).
+        startLocationUpdates()
         
         // Mostrar burbuja flotante si hay autorización
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
@@ -274,6 +277,9 @@ class BackgroundCameraService : LifecycleService() {
         instance = null
         stopCircularBufferTimers()
         stopSensors()
+        // Paramos location al destruir el servicio (ya estaba desacoplada del
+        // ciclo de Standby/Recording, pero la liberamos aquí al apagar).
+        stopLocationUpdates()
         removeFloatingBubble()
         
         currentActiveRecording?.stop()
@@ -913,6 +919,8 @@ class BackgroundCameraService : LifecycleService() {
     // ==========================================
 
     private fun startSensors() {
+        // Sólo acelerómetro. La location se gestiona aparte (ver onCreate
+        // y stopLocationUpdates) para que el velocímetro siga vivo en Standby.
         try {
             sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
             accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -921,15 +929,15 @@ class BackgroundCameraService : LifecycleService() {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
                 Log.d(TAG, "Acelerómetro registrado.")
             }
-            startLocationUpdates()
         } catch (e: Exception) {
             Log.e(TAG, "Error al registrar acelerómetro: ${e.message}")
         }
     }
 
     private fun stopSensors() {
+        // Sólo desregistramos el listener del acelerómetro. La location
+        // permanece activa para que el velocímetro siga funcionando.
         sensorManager?.unregisterListener(accelListener)
-        stopLocationUpdates()
     }
 
     private fun startLocationUpdates() {
