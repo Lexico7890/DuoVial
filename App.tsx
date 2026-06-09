@@ -24,7 +24,7 @@ function AppContent() {
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
 
   const isRecording = status !== 'INACTIVO';
-  const isSaving = status.includes('GUARDANDO') || status.includes('GRABANDO') || status.includes('GENERANDO') || status === 'INICIANDO DUOVIAL';
+  const isSaving = status.includes('GUARDANDO') || status.includes('GENERANDO') || status === 'INICIANDO DUOVIAL';
 
   // Umbral G-Force real (única fuente de verdad: el Service). Se inicializa
   // con 2.5G como fallback y se sincroniza al montar para reflejar el valor

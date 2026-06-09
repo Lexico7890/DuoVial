@@ -130,6 +130,12 @@ class BackgroundCameraService : LifecycleService() {
     // Cooldown para Triggers (12 segundos)
     private var lastEventTriggerTime = 0L
 
+    // Últimos valores conocidos de telemetría. Se actualizan en cada evento
+    // de sensor y se re-emiten al JS cuando el módulo se (re)conecta, evitando
+    // la desincronización de estado tras hot-reload, app reopen o crash recovery.
+    @Volatile private var lastKnownGForce: Double = -1.0
+    @Volatile private var lastKnownSpeed: Double = -1.0
+
     // Umbral de G-Force configurable desde JS. Default 2.5G para preservar
     // el comportamiento histórico. El setter expuesto por el Module lo actualiza
     // y se aplica a partir del próximo evento de sensor (no requiere reinicio).
@@ -187,6 +193,7 @@ class BackgroundCameraService : LifecycleService() {
                 val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble())
                 val gForce = magnitude / SensorManager.GRAVITY_EARTH
                 
+                lastKnownGForce = gForce
                 // Emitir Fuerza G rate-limitada a 200ms
                 val now = System.currentTimeMillis()
                 if (now - lastAccelUpdateTime > 200) {
@@ -207,6 +214,7 @@ class BackgroundCameraService : LifecycleService() {
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             val speedMph = location.speed * 2.23694
+            lastKnownSpeed = speedMph
             statusListener?.onSpeedChanged(speedMph)
         }
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
@@ -385,7 +393,8 @@ class BackgroundCameraService : LifecycleService() {
 
     fun startRecordingMode() {
         if (serviceState == ServiceState.RECORDING) {
-            Log.d(TAG, "El servicio ya está en modo RECORDING.")
+            Log.d(TAG, "El servicio ya está en modo RECORDING. Re-emitiendo estado para sincronizar JS.")
+            sendStatusUpdate("DUOVIAL ACTIVO")
             return
         }
         Log.i(TAG, "Cambiando a modo RECORDING...")
@@ -1007,6 +1016,28 @@ class BackgroundCameraService : LifecycleService() {
         } catch (e: Exception) {
             Log.e(TAG, "Error al detener actualizaciones de ubicación: ${e.message}")
         }
+    }
+
+    /**
+     * Re-emite el estado actual y la última telemetría conocida al JS.
+     * Se invoca desde BackgroundCameraModule.init cuando el puente RN se
+     * (re)conecta, garantizando que la UI siempre refleje el estado real
+     * del servicio nativo (crítico tras hot-reload, app reopen o crash).
+     */
+    fun resyncJsState() {
+        val currentStatus = when (serviceState) {
+            ServiceState.STANDBY -> "INACTIVO"
+            ServiceState.RECORDING -> "DUOVIAL ACTIVO"
+            ServiceState.SAVING -> "GENERANDO CONTENIDO POST EVENTO"
+        }
+        statusListener?.onStatusChanged(currentStatus)
+        if (lastKnownGForce >= 0) {
+            statusListener?.onAccelChanged(lastKnownGForce)
+        }
+        if (lastKnownSpeed >= 0) {
+            statusListener?.onSpeedChanged(lastKnownSpeed)
+        }
+        Log.i(TAG, "Estado re-sincronizado con JS: $currentStatus")
     }
 
     // ==========================================

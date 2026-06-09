@@ -38,7 +38,13 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
                 sendSpeedEventToJS(speed)
             }
         }
-        Log.d(TAG, "statusListener estático vinculado con éxito.")
+
+        // Re-sincronizar el estado JS con el servicio inmediatamente después de
+        // vincular el listener. Esto evita que la UI se quede con un estado obsoleto
+        // (e.g. "INACTIVO") cuando el servicio ya está activo (e.g. "DUOVIAL ACTIVO")
+        // tras un hot-reload, app reopen o crash recovery.
+        BackgroundCameraService.instance?.resyncJsState()
+        Log.d(TAG, "statusListener estático vinculado con éxito. Estado re-sincronizado.")
     }
 
     override fun getName(): String {
