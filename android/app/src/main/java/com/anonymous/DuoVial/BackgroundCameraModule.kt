@@ -37,6 +37,12 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
             override fun onSpeedChanged(speed: Double) {
                 sendSpeedEventToJS(speed)
             }
+            override fun onFaceStatusChanged(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {
+                sendFaceStatusEventToJS(enabled, faceDetected, earValue, closedEyeDuration)
+            }
+            override fun onDrowsinessDetected(timestamp: Long, earValue: Double) {
+                sendDrowsinessDetectedEventToJS(timestamp, earValue)
+            }
         }
 
         // Re-sincronizar el estado JS con el servicio inmediatamente después de
@@ -93,6 +99,36 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
                 .emit("onSpeedChanged", params)
         } catch (e: Exception) {
             // Ignorar
+        }
+    }
+
+    private fun sendFaceStatusEventToJS(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {
+        try {
+            val params = Arguments.createMap().apply {
+                putBoolean("enabled", enabled)
+                putBoolean("faceDetected", faceDetected)
+                putDouble("earValue", earValue)
+                putDouble("closedEyeDuration", closedEyeDuration)
+            }
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onFaceStatusChanged", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar evento de face status a JS: ${e.message}")
+        }
+    }
+
+    private fun sendDrowsinessDetectedEventToJS(timestamp: Long, earValue: Double) {
+        try {
+            val params = Arguments.createMap().apply {
+                putDouble("timestamp", timestamp.toDouble())
+                putDouble("earValue", earValue)
+            }
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onDrowsinessDetected", params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar evento de somnolencia a JS: ${e.message}")
         }
     }
 
@@ -212,5 +248,83 @@ class BackgroundCameraModule(reactContext: ReactApplicationContext) : ReactConte
             ?: BackgroundCameraService.pendingGForceThreshold
             ?: 2.5
         promise.resolve(value)
+    }
+
+    // ==========================================
+    // DETECCIÓN DE SOMNOLENCIA (FATIGA)
+    // ==========================================
+
+    @ReactMethod
+    fun enableFatigueDetection(enable: Boolean) {
+        Log.d(TAG, "enableFatigueDetection($enable) desde JS...")
+        val context = reactApplicationContext
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = if (enable) "ACTION_ENABLE_FATIGUE" else "ACTION_DISABLE_FATIGUE"
+            putExtra("enable", enable)
+        }
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar enableFatigueDetection: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun setEarThreshold(threshold: Double) {
+        Log.d(TAG, "setEarThreshold($threshold) desde JS...")
+        val context = reactApplicationContext
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = "ACTION_SET_EAR_THRESHOLD"
+            putExtra("threshold", threshold)
+        }
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar setEarThreshold: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun snoozeFatigueAlert(minutes: Int) {
+        Log.d(TAG, "snoozeFatigueAlert($minutes) desde JS...")
+        val context = reactApplicationContext
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = "ACTION_SNOOZE_FATIGUE"
+            putExtra("minutes", minutes)
+        }
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al enviar snoozeFatigueAlert: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun getFatigueStatus(promise: Promise) {
+        val service = BackgroundCameraService.instance
+        if (service != null) {
+            promise.resolve(Arguments.createMap().apply {
+                val status = service.getFatigueStatus()
+                putBoolean("enabled", status["enabled"] as Boolean)
+                putBoolean("faceDetected", status["faceDetected"] as Boolean)
+                putDouble("earValue", status["earValue"] as Double)
+                putDouble("closedEyeDuration", status["closedEyeDuration"] as Double)
+                putBoolean("isSnoozed", status["isSnoozed"] as Boolean)
+                putInt("alertCount", status["alertCount"] as Int)
+                putDouble("earThreshold", status["earThreshold"] as Double)
+                putInt("maxAlertsPerHour", status["maxAlertsPerHour"] as Int)
+            })
+        } else {
+            promise.resolve(Arguments.createMap().apply {
+                putBoolean("enabled", false)
+                putBoolean("faceDetected", false)
+                putDouble("earValue", 0.0)
+                putDouble("closedEyeDuration", 0.0)
+                putBoolean("isSnoozed", false)
+                putInt("alertCount", 0)
+                putDouble("earThreshold", 0.2)
+                putInt("maxAlertsPerHour", 3)
+            })
+        }
     }
 }

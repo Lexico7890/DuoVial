@@ -21,3 +21,27 @@ declare module '@expo/vector-icons' {
   export const SimpleLineIcons: ComponentType<IconProps>;
   export const Zocial: ComponentType<IconProps>;
 }
+
+// Eventos emitidos desde BackgroundCameraModule nativo
+export interface FaceStatusEvent {
+  enabled: boolean;
+  faceDetected: boolean;
+  earValue: number;
+  closedEyeDuration: number;
+}
+
+export interface DrowsinessDetectedEvent {
+  timestamp: number;
+  earValue: number;
+}
+
+export interface FatigueStatusNative {
+  enabled: boolean;
+  faceDetected: boolean;
+  earValue: number;
+  closedEyeDuration: number;
+  isSnoozed: boolean;
+  alertCount: number;
+  earThreshold: number;
+  maxAlertsPerHour: number;
+}

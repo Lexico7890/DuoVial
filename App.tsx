@@ -3,6 +3,7 @@ import { StyleSheet, View, StatusBar, SafeAreaView, PermissionsAndroid, Platform
 import { colors } from './src/theme/colors';
 import { SystemHeader } from './src/components/SystemHeader';
 import { MonitorScreen } from './src/components/MonitorScreen';
+import { FatigueScreen } from './src/components/FatigueScreen';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { BackgroundGuard } from './src/services/BackgroundGuard';
@@ -144,7 +145,15 @@ function AppContent() {
       onStart={handleStart}
       onStop={handleStop}
       onToggle={handleToggle}
+      onOpenFrontal={() => setActiveTab('Fatigue')}
     />
+  );
+
+  // ==========================================
+  // RENDER PESTAÑA: FATIGUE (DETECCIÓN DE SOMNOLENCIA)
+  // ==========================================
+  const renderFatigue = () => (
+    <FatigueScreen onBack={() => setActiveTab('Monitor')} />
   );
 
   // ==========================================
@@ -336,17 +345,18 @@ function AppContent() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
       <View style={styles.container}>
-        {/* Header legacy — sólo visible en pestañas que no son Monitor. En Monitor
-            el header está integrado dentro de MonitorScreen (flotante con glass). */}
-        {activeTab !== 'Monitor' && <SystemHeader />}
+        {/* Header legacy — sólo visible en pestañas que no son Monitor ni Fatigue. */}
+        {activeTab !== 'Monitor' && activeTab !== 'Fatigue' && <SystemHeader />}
 
         {/* Render Tab Dinámico */}
         {activeTab === 'Monitor' && renderMonitor()}
+        {activeTab === 'Fatigue' && renderFatigue()}
         {activeTab === 'Eventos' && renderEventos()}
         {activeTab === 'Configuraciones' && renderConfiguraciones()}
         {activeTab === 'Cuenta' && renderCuenta()}
 
-        {/* Barra de Navegación del Menú Principal */}
+        {/* Barra de Navegación del Menú Principal — oculta en FatigueScreen */}
+        {activeTab !== 'Fatigue' && (
         <View style={styles.bottomNavContainer}>
           <TouchableOpacity 
             style={styles.navTab}
@@ -404,6 +414,7 @@ function AppContent() {
             </Text>
           </TouchableOpacity>
         </View>
+        )}
       </View>
     </SafeAreaView>
   );

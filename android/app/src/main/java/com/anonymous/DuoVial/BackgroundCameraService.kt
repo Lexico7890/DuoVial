@@ -63,6 +63,8 @@ interface CameraStatusListener {
     fun onStatusChanged(status: String)
     fun onAccelChanged(gForce: Double)
     fun onSpeedChanged(speed: Double)
+    fun onFaceStatusChanged(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double)
+    fun onDrowsinessDetected(timestamp: Long, earValue: Double)
 }
 
 /**
@@ -145,6 +147,9 @@ class BackgroundCameraService : LifecycleService() {
     private var windowManager: WindowManager? = null
     private var floatingBubbleView: View? = null
 
+    // FrontFaceDetector (anti-somnolencia)
+    private var frontFaceDetector: FrontFaceDetector? = null
+
     companion object {
         var instance: BackgroundCameraService? = null
         var activePreview: Preview? = null
@@ -165,6 +170,11 @@ class BackgroundCameraService : LifecycleService() {
         // Umbral G-Force pendiente de aplicar. Si JS llama al setter antes
         // de que el Service exista, lo guardamos aquí y lo aplicamos en onCreate.
         @Volatile var pendingGForceThreshold: Double? = null
+
+        // Umbral EAR pendiente de aplicar (anti-somnolencia)
+        @Volatile var pendingEarThreshold: Double? = null
+        // Estado de fatiga pendiente de aplicar
+        @Volatile var pendingFatigueEnabled: Boolean? = null
 
         internal fun markServiceStarting() { serviceStarting = true }
         internal fun clearServiceStarting() { serviceStarting = false }
@@ -238,6 +248,28 @@ class BackgroundCameraService : LifecycleService() {
             Log.i(TAG, "Aplicado umbral G-Force pendiente: $it G")
         }
 
+        // Inicializar FrontFaceDetector (anti-somnolencia)
+        frontFaceDetector = FrontFaceDetector(this).apply {
+            pendingEarThreshold?.let {
+                earThreshold = it
+                pendingEarThreshold = null
+            }
+            eventListener = object : FrontFaceDetector.FatigueEventListener {
+                override fun onFaceStatusChanged(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {
+                    sendFatigueStatusEvent(enabled, faceDetected, earValue, closedEyeDuration)
+                }
+                override fun onDrowsinessDetected(timestamp: Long, earValue: Double) {
+                    sendDrowsinessDetectedEvent(timestamp, earValue)
+                }
+            }
+        }
+        // Auto-activar si había un pendingFatigueEnabled
+        if (pendingFatigueEnabled == true) {
+            frontFaceDetector?.start()
+            pendingFatigueEnabled = null
+            Log.i(TAG, "FrontFaceDetector auto-activado desde pending.")
+        }
+
         startServiceNotification()
         startCameraX()
         // Location SIEMPRE activa desde onCreate — el velocímetro debe funcionar
@@ -272,6 +304,21 @@ class BackgroundCameraService : LifecycleService() {
                 "ACTION_STOP_SERVICE" -> {
                     stopSelf()
                 }
+                "ACTION_ENABLE_FATIGUE" -> {
+                    val enable = intent.getBooleanExtra("enable", true)
+                    toggleFatigueDetection(enable)
+                }
+                "ACTION_DISABLE_FATIGUE" -> {
+                    toggleFatigueDetection(false)
+                }
+                "ACTION_SET_EAR_THRESHOLD" -> {
+                    val threshold = intent.getDoubleExtra("threshold", 0.2)
+                    setEarThreshold(threshold)
+                }
+                "ACTION_SNOOZE_FATIGUE" -> {
+                    val minutes = intent.getIntExtra("minutes", 5)
+                    snoozeFatigueAlert(minutes)
+                }
             }
         } else {
             startStandbyMode()
@@ -285,6 +332,9 @@ class BackgroundCameraService : LifecycleService() {
         instance = null
         stopCircularBufferTimers()
         stopSensors()
+        // Detener FrontFaceDetector si está activo
+        frontFaceDetector?.stop()
+        frontFaceDetector = null
         // Paramos location al destruir el servicio (ya estaba desacoplada del
         // ciclo de Standby/Recording, pero la liberamos aquí al apagar).
         stopLocationUpdates()
@@ -1038,6 +1088,58 @@ class BackgroundCameraService : LifecycleService() {
             statusListener?.onSpeedChanged(lastKnownSpeed)
         }
         Log.i(TAG, "Estado re-sincronizado con JS: $currentStatus")
+    }
+
+    // ==========================================
+    // DETECCIÓN DE SOMNOLENCIA (FATIGA)
+    // ==========================================
+
+    fun toggleFatigueDetection(enable: Boolean) {
+        if (enable) {
+            frontFaceDetector?.start()
+            Log.i(TAG, "Detección de fatiga activada.")
+        } else {
+            frontFaceDetector?.stop()
+            Log.i(TAG, "Detección de fatiga desactivada.")
+        }
+    }
+
+    fun setEarThreshold(threshold: Double) {
+        if (threshold < 0.1 || threshold > 0.4) {
+            Log.w(TAG, "Umbral EAR fuera de rango (0.1..0.4): $threshold — ignorado.")
+            return
+        }
+        frontFaceDetector?.earThreshold = threshold
+        Log.i(TAG, "Umbral EAR actualizado a $threshold")
+    }
+
+    fun getEarThreshold(): Double = frontFaceDetector?.earThreshold ?: 0.2
+
+    fun snoozeFatigueAlert(minutes: Int) {
+        frontFaceDetector?.snooze(minutes)
+        Log.i(TAG, "Snooze de fatiga activado por $minutes minutos.")
+    }
+
+    fun getFatigueStatus(): Map<String, Any> {
+        val detector = frontFaceDetector
+        return mapOf(
+            "enabled" to (detector?.isActive ?: false),
+            "faceDetected" to (detector?.isFaceDetected ?: false),
+            "earValue" to (detector?.currentEar ?: 0.0),
+            "closedEyeDuration" to (detector?.closedEyeDurationActual ?: 0.0),
+            "isSnoozed" to (detector?.isSnoozed ?: false),
+            "alertCount" to (detector?.alertCountThisHour ?: 0),
+            "earThreshold" to (detector?.earThreshold ?: 0.2),
+            "maxAlertsPerHour" to (detector?.maxAlertsPerHour ?: 3)
+        )
+    }
+
+    private fun sendFatigueStatusEvent(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {
+        statusListener?.onFaceStatusChanged(enabled, faceDetected, earValue, closedEyeDuration)
+    }
+
+    private fun sendDrowsinessDetectedEvent(timestamp: Long, earValue: Double) {
+        statusListener?.onDrowsinessDetected(timestamp, earValue)
     }
 
     // ==========================================

@@ -17,6 +17,7 @@ interface MonitorScreenProps {
   onStart: () => void;
   onStop: () => void;
   onToggle: () => void;
+  onOpenFrontal: () => void;
 }
 
 /**
@@ -51,6 +52,7 @@ export const MonitorScreen: React.FC<MonitorScreenProps> = ({
   onStart,
   onStop,
   onToggle,
+  onOpenFrontal,
 }) => {
   const shortStatus = getShortStatus(status);
 
@@ -101,7 +103,7 @@ export const MonitorScreen: React.FC<MonitorScreenProps> = ({
             <Text style={styles.headerSubtitle}>STANDBY ACTIVE</Text>
           </View>
         </View>
-        <TouchableOpacity activeOpacity={0.8} style={styles.frontalButton}>
+        <TouchableOpacity activeOpacity={0.8} onPress={onOpenFrontal} style={styles.frontalButton}>
           <MaterialCommunityIcons name="emoticon-wink-outline" size={16} color="#FF9F0A" />
           <Text style={styles.frontalButtonText}>Frontal</Text>
         </TouchableOpacity>

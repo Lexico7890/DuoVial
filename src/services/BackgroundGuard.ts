@@ -111,4 +111,66 @@ export class BackgroundGuard {
     }
     return 2.5;
   }
+
+  // ==========================================
+  // DETECCIÓN DE SOMNOLENCIA (FATIGA)
+  // ==========================================
+
+  /**
+   * Activa o desactiva la detección de somnolencia (cámara frontal + ML Kit).
+   */
+  static enableFatigueDetection(enable: boolean) {
+    if (BackgroundCameraModule && BackgroundCameraModule.enableFatigueDetection) {
+      BackgroundCameraModule.enableFatigueDetection(enable);
+    }
+  }
+
+  /**
+   * Setea el umbral de EAR para la detección de fatiga.
+   * Rango válido: 0.1..0.4 (default 0.2).
+   */
+  static setEarThreshold(threshold: number) {
+    if (BackgroundCameraModule && BackgroundCameraModule.setEarThreshold) {
+      BackgroundCameraModule.setEarThreshold(threshold);
+    }
+  }
+
+  /**
+   * Activa snooze para ignorar alertas de fatiga por N minutos.
+   */
+  static snoozeFatigueAlert(minutes: number) {
+    if (BackgroundCameraModule && BackgroundCameraModule.snoozeFatigueAlert) {
+      BackgroundCameraModule.snoozeFatigueAlert(minutes);
+    }
+  }
+
+  /**
+   * Obtiene el estado actual de la detección de fatiga.
+   */
+  static async getFatigueStatus(): Promise<FatigueStatus> {
+    if (BackgroundCameraModule && BackgroundCameraModule.getFatigueStatus) {
+      return await BackgroundCameraModule.getFatigueStatus();
+    }
+    return {
+      enabled: false,
+      faceDetected: false,
+      earValue: 0,
+      closedEyeDuration: 0,
+      isSnoozed: false,
+      alertCount: 0,
+      earThreshold: 0.2,
+      maxAlertsPerHour: 3,
+    };
+  }
+}
+
+export interface FatigueStatus {
+  enabled: boolean;
+  faceDetected: boolean;
+  earValue: number;
+  closedEyeDuration: number;
+  isSnoozed: boolean;
+  alertCount: number;
+  earThreshold: number;
+  maxAlertsPerHour: number;
 }

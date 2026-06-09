@@ -112,7 +112,7 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 | **Cámara** | react-native-vision-camera | Acceso a CameraX nativo, Frame Processors |
 | **Sensores** | react-native-sensors | Acelerómetro, giroscopio, etc. |
 | **Persistencia** | @rn-native-utils/workmanager | Mantener servicio en background |
-| **IA Facial** | vision-camera-face-detector (ML Kit) | Detección de parpadeo, on-device |
+| **IA Facial** | ML Kit Face Detection (Android nativo) | Detección de parpadeo, on-device, Camera2 |
 | **Almacenamiento** | RNFS (React Native File System) | Gestionar archivos de video |
 | **Monetización** | RevenueCat / Stripe | Gestionar suscripciones |
 | **Background** | rn-foreground-service | Servicio persistente en foreground |
@@ -142,11 +142,12 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                    CÁMARA FRONTAL (Anti-Somnolencia)         │
-│ 480p @ 10fps → Frame Processor → ML Kit Face Detection      │
+│ 640×480 @ 10fps → Camera2 ImageReader → ML Kit Face Det.    │
 │                                                              │
+│ Selección: Solo conductor (mayor x en raw frame)             │
 │ Almacenamiento: NINGUNO (frames se descartan)               │
-│ Cálculo: Eye Aspect Ratio en tiempo real                    │
-│ Trigger: Ojos cerrados > 2 segundos → VIBRACIÓN + SONIDO    │
+│ Cálculo: EAR en tiempo real                                 │
+│ Trigger: EAR < 0.2 × > 2 segundos → VIBRACIÓN + SONIDO    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -200,15 +201,54 @@ Android File System:
 ### FASE 3: El Vigilante (Detección de Somnolencia)
 **Objetivo**: Alertar al conductor si se duerme  
 **Duración**: 1-2 semanas  
-**Tareas**:
-- [ ] Implementar Frame Processor para cámara frontal (480p @ 10fps)
-- [ ] Usar ML Kit Face Detection para puntos faciales
-- [ ] Calcular Eye Aspect Ratio (EAR)
-- [ ] Lógica: Si EAR < threshold por > 2 segundos → vibrar + sonido
-- [ ] Permite ajustar sensibilidad (slider en Settings)
-- [ ] Permite desactivar temporalmente (snooze 5 min)
+**Arquitectura**: 
+- Cámara frontal: Android Camera2 API (ImageReader) separado de CameraX
+- Face Detection: ML Kit (`com.google.mlkit:face-detection:16.1.6`)
+- Alertas: Nativas (Kotlin) — vibración + sonido inmediatos
+- UI: Pantalla dedicada (FatigueScreen) accesible desde botón "Frontal"
+- Selección: Solo conductor (rostro con mayor x en frame raw = izquierda en preview espejado)
 
-**Definición de listo**: El conductor recibe alerta cuando se duerme, EAR calibrado por persona
+**Tareas**:
+- [ ] Agregar dependencia ML Kit en `android/app/build.gradle`
+- [ ] Crear `FrontFaceDetector.kt` — cámara frontal + ML Kit + EAR + alertas
+- [ ] Integrar `FrontFaceDetector` en `BackgroundCameraService.kt`
+- [ ] Agregar métodos bridge nativo→JS en `BackgroundCameraModule.kt`
+- [ ] Agregar métodos JS en `BackgroundGuard.ts`
+- [ ] Crear `FatigueScreen.tsx` — pantalla dedicada con preview + configuración
+- [ ] Modificar `MonitorScreen.tsx` — botón "Frontal" navega a FatigueScreen
+- [ ] Modificar `App.tsx` — estado fatiga + navegación + listeners
+- [ ] Persistir configuración (AsyncStorage)
+
+**Especificaciones técnicas**:
+- Resolución cámara frontal: 640×480 (VGA)
+- FPS: 10 fps (suficiente para parpadeo)
+- EAR threshold: 0.2 (ajustable 0.1-0.4)
+- Duration threshold: 2 segundos (ajustable 1-5 seg)
+- Anti-spam: máximo 3 alertas por hora (ajustable 1-5)
+- Snooze: 5 minutos
+- Vibración: Patrón [0, 500, 200, 500] ms
+- Sonido: Alarma 2 segundos
+
+**Selección del conductor**:
+- ML Kit retorna bounding boxes con `x, y, width, height` para cada rostro
+- Cámara frontal espeja la imagen (como espejo)
+- En frame RAW: conductor está a la DERECHA (alto x)
+- En preview ESPEJADO: conductor aparece a la IZQUIERDA
+- Implementación: `val driverFace = faces.maxByOrNull { it.boundingBox.centerX() }`
+
+**Definición de listo**: 
+- [ ] Botón "Frontal" navega a FatigueScreen
+- [ ] Cámara frontal se activa solo en FatigueScreen
+- [ ] ML Kit detecta rostro y calcula EAR en tiempo real
+- [ ] Solo se valida el conductor (izquierda de pantalla)
+- [ ] Alerta nativa (vibración + sonido) cuando ojos cerrados > 2s
+- [ ] Anti-spam (máx 3 alertas/hora)
+- [ ] Snooze 5 min funcional
+- [ ] Sliders de configuración funcional
+- [ ] Estado visual: 🟢 Abiertos / 🟡 Cerrando / 🔴 Fatiga
+- [ ] Persistencia de configuración entre sesiones
+- [ ] Sin errores de compilación
+- [ ] No interfiere con grabación trasera
 
 ---
 
@@ -542,28 +582,39 @@ CONSUMO ESTIMADO:
 CONFIGURACIÓN:
 ├── Resolución: 640 × 480 (VGA optimizado)
 ├── FPS: 10 fps (suficiente para parpadeo)
-├── Frame Processor: ML Kit Face Detection
+├── API: Android Camera2 (ImageReader) — separado de CameraX
+├── Frame Processor: ML Kit Face Detection (`com.google.mlkit:face-detection:16.1.6`)
 ├── Almacenamiento: NINGUNO (frames se descartan)
-├── Cálculo: Eye Aspect Ratio (EAR)
+├── Cálculo: Eye Aspect Ratio (EAR) en tiempo real
 └── Trigger alerta: EAR < 0.2 × > 2 segundos
 
+SELECCIÓN DEL CONDUCTOR:
+├── ML Kit retorna bounding boxes con x, y, width, height
+├── Cámara frontal espeja la imagen (como espejo)
+├── En frame RAW: conductor está a la DERECHA (alto x)
+├── En preview ESPEJADO: conductor aparece a la IZQUIERDA
+├── Selección: faces.maxByOrNull { it.boundingBox.centerX() }
+└── Edge cases: 1 persona → usar esa; 0 personas → no alertar
+
 EAR CÁLCULO:
-├── Puntos faciales: p1-p6 (ojos)
+├── Ojos: FaceContour.LEFT_EYE y FaceContour.RIGHT_EYE
+├── Puntos: 6 puntos por ojo (p1-p6)
 ├── Vertical1 = distance(p2, p6)
 ├── Vertical2 = distance(p3, p5)
 ├── Horizontal = distance(p1, p4)
-└── EAR = (vertical1 + vertical2) / (2.0 × horizontal)
+└── EAR = (vertical1 + vertical2) / (2.0 × horizontal) — promedio ambos ojos
 
 UMBRALES CONFIGURABLES:
-├── Closed eye threshold: EAR < 0.2 (ajustable)
+├── Closed eye threshold: EAR < 0.2 (ajustable 0.1-0.4)
 ├── Duration: > 2 segundos (ajustable 1-5 seg)
 ├── Snooze: 5 minutos (usuario puede ignorar alerta)
-└── Allowed per hour: 3 alertas (anti-spam)
+└── Allowed per hour: 3 alertas (ajustable 1-5)
 
 ACCIÓN AL DETECTAR:
-├── Vibración: Patrón [0, 500, 200, 500] ms
-├── Sonido: Alarma de 2 segundos (ajustable volumen)
-├── Visual: Notificación en pantalla
+├── Vibración: Patrón [0, 500, 200, 500] ms (nativa Kotlin)
+├── Sonido: Alarma de 2 segundos (nativa Kotlin)
+├── Visual: Overlay rojo intermitente en FatigueScreen
+├── Evento JS: onDrowsinessDetected (para UI feedback)
 └── LOG: Registro del evento para análisis
 
 CONSUMO ESTIMADO:
@@ -571,6 +622,15 @@ CONSUMO ESTIMADO:
 ├── Almacenamiento: 0 bytes (nada se guarda)
 ├── Batería: ~4% por hora
 └── Temperatura: +2-3°C sobre ambiente
+
+ARCHIVOS:
+├── FrontFaceDetector.kt (nuevo) — cámara frontal + ML Kit + EAR + alertas
+├── BackgroundCameraService.kt — integrar FrontFaceDetector
+├── BackgroundCameraModule.kt — métodos bridge nativo→JS
+├── BackgroundGuard.ts — métodos JS
+├── FatigueScreen.tsx (nuevo) — pantalla dedicada con preview + configuración
+├── MonitorScreen.tsx — botón "Frontal" navega a FatigueScreen
+└── App.tsx — estado fatiga + navegación + listeners
 ```
 
 ### 2.3 Detección Multi-Sensor
