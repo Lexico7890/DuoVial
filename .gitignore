@@ -1,16 +1,23 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# --- KMP / Gradle ---
+kmp/build/
+kmp/.gradle/
+kmp/composeApp/build/
+kmp/local.properties
 
-# dependencies
+# --- Android Studio / IDEA ---
+.idea/
+*.iml
+.kotlin/
+
+# --- RN legacy remnants ---
 node_modules/
-
-# Expo
+android/
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# Native
-.kotlin/
+# --- Native ---
 *.orig.*
 *.jks
 *.p8
@@ -18,21 +25,20 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# Metro
+# --- Metro ---
 .metro-health-check*
 
-# debug
+# --- Debug ---
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# --- macOS ---
 .DS_Store
 *.pem
 
-# local env files
+# --- Env ---
 .env*.local
 
-# typescript
+# --- TypeScript ---
 *.tsbuildinfo
-

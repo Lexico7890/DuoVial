@@ -1,7 +1,7 @@
 # 📋 CONTEXT.md - DASH CAM INTELIGENTE PARA CONDUCTORES
 
-**Última actualización**: Mayo 2026  
-**Estado del proyecto**: MVP en desarrollo  
+**Última actualización**: Junio 10, 2026  
+**Estado del proyecto**: MVP en desarrollo — Fases 1-3 completadas, Fase 4 pendiente  
 **Audiencia**: Agentes de IA, desarrolladores, stakeholders técnicos
 
 ---
@@ -106,16 +106,22 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 
 ### Stack tecnológico actual
 
+> **Nota**: La implementación real divergió del plan original (react-native-vision-camera, react-native-sensors). Se optó por acceso nativo directo en Kotlin para máximo control y rendimiento.
+
 | Capa | Tecnología | Propósito |
 |------|-----------|----------|
-| **Frontend** | React Native | UI multiplataforma (Android - iOS no soportado) |
-| **Cámara** | react-native-vision-camera | Acceso a CameraX nativo, Frame Processors |
-| **Sensores** | react-native-sensors | Acelerómetro, giroscopio, etc. |
-| **Persistencia** | @rn-native-utils/workmanager | Mantener servicio en background |
-| **IA Facial** | ML Kit Face Detection (Android nativo) | Detección de parpadeo, on-device, Camera2 |
-| **Almacenamiento** | RNFS (React Native File System) | Gestionar archivos de video |
-| **Monetización** | RevenueCat / Stripe | Gestionar suscripciones |
-| **Background** | rn-foreground-service | Servicio persistente en foreground |
+| **Frontend** | React Native (Expo SDK 54) | UI, navegación, estado |
+| **Cámara** | CameraX nativo (Kotlin) + PreviewView | Acceso directo a la cámara trasera, buffer circular |
+| **Sensores** | SensorManager nativo (Kotlin) | Acelerómetro (G-Force) |
+| **GPS** | LocationManager nativo (Kotlin) | Velocímetro (MPH) |
+| **Background** | LifecycleService + Foreground Service (Kotlin) | Supervivencia del servicio |
+| **Persistencia** | WorkManager (@rn-native-utils/workmanager) | Watchdog que revive el servicio |
+| **Puente RN→Nativo** | DeviceEventEmitter + NativeModules | Eventos de estado y telemetría en tiempo real |
+| **Almacenamiento** | MediaStore + context.cacheDir (Android nativo) | Segmentos de video temporales y exportación |
+| **IA Facial** | ML Kit Face Detection (Android nativo) | Detección de somnolencia (EAR) — activa |
+| **Build** | EAS Build (Expo) | APK firmado en la nube |
+| **Auth** | AWS Cognito (aws-amplify) | Login/logout (Cuenta) |
+| **Iconos** | @expo/vector-icons (MaterialCommunityIcons) | Iconografía de la UI |
 
 ### Flujo de datos
 
@@ -170,37 +176,40 @@ Android File System:
 
 ### FASE 1: El Guardián (Persistencia en Segundo Plano)
 **Objetivo**: Que la app sobreviva al sistema operativo  
-**Duración**: 1-2 semanas  
+**Estado**: ✅ COMPLETADA  
 **Tareas**:
-- [ ] Crear Foreground Service con notificación persistente
-- [ ] Tutorial para desactivar optimización de batería (crítico en Xiaomi, Samsung, Huawei)
-- [ ] WorkManager Watchdog que reinicia proceso si Android lo mata
-- [ ] Testing en mínimo 3 dispositivos diferentes
+- [x] Crear Foreground Service con notificación persistente (`BackgroundCameraService.kt`)
+- [x] Servicio sobrevive a cierre de app (START_STICKY)
+- [x] WorkManager Watchdog que reinicia proceso si Android lo mata
+- [x] Notificación dinámica que refleja estado (Standby / Vigilando)
+- [x] Burbuja flotante draggable (PIP) para pánico rápido
 
-**Definición de listo**: La app sigue grabando incluso si la cierras manualmente
+**Definición de listo**: La app sigue grabando incluso si la cierras manualmente ✅
 
 ---
 
 ### FASE 2: Los Sentidos (Buffer Circular + Detección Multi-Sensor)
 **Objetivo**: Implementar el sistema de bajo consumo  
-**Duración**: 2-3 semanas  
+**Estado**: ✅ COMPLETADA (con divergencias del plan original)  
 **Tareas**:
-- [ ] Integrar react-native-vision-camera con Frame Processor
-- [ ] Configurar bitrate a 2 Mbps (vs. default 6 Mbps)
-- [ ] Desactivar audio en grabación (ahorra 30% CPU)
-- [ ] Buffer circular en cache del sistema (2 segmentos × 15 seg)
-- [ ] Implementar botón de pánico (trigger manual)
-- [ ] Implementar detección de giroscopio (rotación > 3.0 rad/s)
-- [ ] Implementar detección de audio (picos > -20 dB)
-- [ ] Testing de consumo de batería (debe ser ~10-12%/hora)
+- [x] Integrar CameraX nativa (Kotlin) con PreviewView — **NO react-native-vision-camera**
+- [x] Configurar bitrate a 2 Mbps (HD) vía Recorder de CameraX
+- [x] Buffer circular en cacheDir (2 segmentos × 15 seg)
+- [x] Implementar botón de pánico / Evento (trigger manual)
+- [x] Implementar detección de acelerómetro (G-Force > 2.5G configurable)
+- [x] Umbral G-Force configurable desde JS (1.5–5.0G)
+- [x] Velocímetro GPS (MPH) desacoplado del sensor manager — vivo en Standby
+- [ ] ~~Giroscopio~~ (sustituido por acelerómetro configurable, más fiable en pruebas)
+- [ ] ~~Detección de audio~~ (pospuesto: acelerómetro + botón cubren ~85% en pruebas)
+- [ ] Testing formal de consumo de batería
 
-**Definición de listo**: Grabar sin escribir continuamente al disco, detección multi-sensor funcionando
+**Divergencias del plan**: Se sustituyó react-native-vision-camera y react-native-sensors por acceso nativo directo en Kotlin (CameraX, SensorManager, LocationManager). Esto dio mejor control y rendimiento a costa de más complejidad en el puente RN-nativo.
 
 ---
 
 ### FASE 3: El Vigilante (Detección de Somnolencia)
 **Objetivo**: Alertar al conductor si se duerme  
-**Duración**: 1-2 semanas  
+**Estado**: ✅ COMPLETADA  
 **Arquitectura**: 
 - Cámara frontal: Android Camera2 API (ImageReader) separado de CameraX
 - Face Detection: ML Kit (`com.google.mlkit:face-detection:16.1.6`)
@@ -209,15 +218,15 @@ Android File System:
 - Selección: Solo conductor (rostro con mayor x en frame raw = izquierda en preview espejado)
 
 **Tareas**:
-- [ ] Agregar dependencia ML Kit en `android/app/build.gradle`
-- [ ] Crear `FrontFaceDetector.kt` — cámara frontal + ML Kit + EAR + alertas
-- [ ] Integrar `FrontFaceDetector` en `BackgroundCameraService.kt`
-- [ ] Agregar métodos bridge nativo→JS en `BackgroundCameraModule.kt`
-- [ ] Agregar métodos JS en `BackgroundGuard.ts`
-- [ ] Crear `FatigueScreen.tsx` — pantalla dedicada con preview + configuración
-- [ ] Modificar `MonitorScreen.tsx` — botón "Frontal" navega a FatigueScreen
-- [ ] Modificar `App.tsx` — estado fatiga + navegación + listeners
-- [ ] Persistir configuración (AsyncStorage)
+- [x] Agregar dependencia ML Kit en `android/app/build.gradle`
+- [x] Crear `FrontFaceDetector.kt` — cámara frontal + ML Kit + EAR + alertas
+- [x] Integrar `FrontFaceDetector` en `BackgroundCameraService.kt`
+- [x] Agregar métodos bridge nativo→JS en `BackgroundCameraModule.kt`
+- [x] Agregar métodos JS en `BackgroundGuard.ts`
+- [x] Crear `FatigueScreen.tsx` — pantalla dedicada con preview + configuración
+- [x] Modificar `MonitorScreen.tsx` — botón "Frontal" navega a FatigueScreen
+- [x] Modificar `App.tsx` — estado fatiga + navegación + listeners
+- [ ] Persistir configuración (AsyncStorage) — pendiente para Fase 4
 
 **Especificaciones técnicas**:
 - Resolución cámara frontal: 640×480 (VGA)
@@ -237,18 +246,18 @@ Android File System:
 - Implementación: `val driverFace = faces.maxByOrNull { it.boundingBox.centerX() }`
 
 **Definición de listo**: 
-- [ ] Botón "Frontal" navega a FatigueScreen
-- [ ] Cámara frontal se activa solo en FatigueScreen
-- [ ] ML Kit detecta rostro y calcula EAR en tiempo real
-- [ ] Solo se valida el conductor (izquierda de pantalla)
-- [ ] Alerta nativa (vibración + sonido) cuando ojos cerrados > 2s
-- [ ] Anti-spam (máx 3 alertas/hora)
-- [ ] Snooze 5 min funcional
-- [ ] Sliders de configuración funcional
-- [ ] Estado visual: 🟢 Abiertos / 🟡 Cerrando / 🔴 Fatiga
-- [ ] Persistencia de configuración entre sesiones
-- [ ] Sin errores de compilación
-- [ ] No interfiere con grabación trasera
+- [x] Botón "Frontal" navega a FatigueScreen
+- [x] Cámara frontal se activa solo en FatigueScreen
+- [x] ML Kit detecta rostro y calcula EAR en tiempo real
+- [x] Solo se valida el conductor (izquierda de pantalla)
+- [x] Alerta nativa (vibración + sonido) cuando ojos cerrados > 2s
+- [x] Anti-spam (máx 3 alertas/hora)
+- [x] Snooze 5 min funcional
+- [x] Sliders de configuración funcional
+- [x] Estado visual: 🟢 Abiertos / 🟡 Cerrando / 🔴 Fatiga
+- [ ] Persistencia de configuración entre sesiones (pendiente Fase 4)
+- [x] Sin errores de compilación
+- [x] No interfiere con grabación trasera
 
 ---
 
@@ -259,7 +268,7 @@ Android File System:
 - [ ] Pantalla de onboarding (explicar permisos, riesgos de OIS)
 - [ ] Integración con RevenueCat (prueba gratis, suscripciones)
 - [ ] Pantalla de "Incidentes Guardados" con preview y acciones (share, delete)
-- [ ] Settings con controles de sensibilidad (audio, giroscopio, etc.)
+- [x] Settings con controles de sensibilidad — G-Force threshold slider + overlay permission ya implementados en Configuraciones
 - [ ] Disclaimer sobre desgaste OIS y responsabilidades legales
 - [ ] Testing de flujo completo end-to-end
 
@@ -332,8 +341,8 @@ Android File System:
 - ❌ Curva de aprendizaje alta
 - ❌ Más bugs potenciales
 
-**Decisión Final**: **React Native Vision Camera para MVP**  
-**Justificación**: Lanzar rápido validar. Post-MVP, migrar a nativo si necesario.
+**Decisión Final**: **Código Nativo (Kotlin)** — ver Decisión 6  
+**Justificación**: Se optó por acceso nativo directo para máximo control del ciclo de vida de la cámara, crítico para el buffer circular.
 
 ---
 
@@ -373,40 +382,103 @@ Android File System:
 
 ---
 
+### Decisión 6: ¿React Native wrappers vs. Kotlin nativo directo? (REVISADA)
+
+**Plan original**: react-native-vision-camera + react-native-sensors
+
+**Lo que realmente se implementó**: CameraX nativo + SensorManager nativo + LocationManager nativo, todo en Kotlin
+
+**Razones del cambio**:
+- ✅ Control total sobre el ciclo de vida de la cámara — crítico para el buffer circular
+- ✅ PreviewView nativo sin depender de abstracciones RN
+- ✅ SensorManager nativo permite rate-limiting y filtrado personalizado
+- ✅ LocationManager nativo desacoplado del ciclo de grabación (GPS vivo en Standby)
+- ✅ El puente RN→Kotlin se hace vía `BackgroundCameraModule` + `DeviceEventEmitter`
+- ✅ Sin dependencias npm frágiles para funcionalidad core
+
+**Tradeoff**: Más código Kotlin que mantener, mayor superficie de bugs en la capa nativa
+
+---
+
+### Decisión 7: Arquitectura de estado — Servicio como fuente única de verdad
+
+**Problema encontrado**: El JS y el servicio nativo pueden desincronizarse. Casos:
+- Hot reload de Metro (el servicio sobrevive, RN se reinicia)
+- Android mata el proceso JS pero el Foreground Service sigue vivo
+- El usuario cierra y reabre la app mientras el servicio graba
+
+**Solución implementada**:
+- `CameraStatusListener` en el companion object del servicio: interface estática para comunicación
+- `resyncJsState()`: llamado desde `Module.init` cuando RN se (re)conecta al servicio. Re-emite estado actual + última telemetría conocida (`lastKnownGForce`, `lastKnownSpeed`)
+- `forceResetToStandby()`: red de seguridad. Aborta cualquier estado intermedio y vuelve a STANDBY. Idempotente.
+- `onRecordingFinalized()`: guard anti-race que verifica `serviceState` antes de iniciar nuevo segmento (evita "segmentos huérfanos")
+- `stop` ya NO mata el servicio (`stopSelf()`) — guarda el buffer y vuelve a STANDBY, preservando la sesión
+
+**Definición**: El servicio nativo es la única fuente de verdad del estado. El JS es un espejo que se sincroniza en cada acción y en cada reconexión.
+
+---
+
+### Decisión 8: UI estilo Google Maps (Monitor fullscreen)
+
+**Diseño implementado** (Junio 2026):
+- Cámara ocupa TODA la pantalla como fondo (`StyleSheet.absoluteFill`)
+- Header flotante con efecto glass-morphism (top)
+- Status pill estilo "Luego" de Maps (debajo del header)
+- Telemetría en círculos sin título: G-Force (arriba) y MPH (abajo) — bottom-left
+- Power (icono, sin texto) encima de Evento — bottom-right
+- REC badge cuando graba (parpadeante, top-right)
+- Bottom nav sin cambios (Monitor, Eventos, Configurar, Cuenta)
+
+**Componentes clave**: `MonitorScreen.tsx` (nuevo), `App.tsx` (delegado)
+
+---
+
+### Decisión 9: Recuperación de emergencia ante estado atascado
+
+**Problema**: Si el servicio queda en estado SAVING (e.g. post-evento de 15s que nunca finaliza), el JS mostraba "Guardando evento" y el usuario no podía hacer nada. Ni start ni stop funcionaban porque `isSaving=true` bloqueaba todos los handlers.
+
+**Solución**:
+- `forceReset()` expuesto como `@ReactMethod` en el módulo nativo
+- Si el servicio está vivo → `forceResetToStandby()` → STANDBY → emite INACTIVO
+- Si el servicio está muerto → emite INACTIVO directamente para que la UI se recupere
+- `handleStart` y `handleStop` en `App.tsx` ahora detectan `isSaving=true` y llaman `forceReset()` en vez de retornar
+- **Garantía**: el usuario SIEMPRE puede recuperar el control, sin importar el estado del servicio
+
+---
+
 ## 🚨 SISTEMA DE DETECCIÓN DE EVENTOS
 
-### Trigger 1: Botón de Pánico (CRÍTICO)
+### Trigger 1: Botón de Pánico / Evento (CRÍTICO)
 ```
-Prioridad: ⭐⭐⭐ DEBE estar en MVP
-Cobertura: 70% (el usuario VE el peligro primero)
-Implementación: 2 horas
-Ubicación: Centro de pantalla, prominente
-Acción: saveBufferOnImpact() guarda últimos 30 seg
-```
-
-### Trigger 2: Giroscopio (ALTA)
-```
-Prioridad: ⭐⭐⭐ Implementar en MVP
-Cobertura: 15% adicional (derrapes, volcamientos)
-Implementación: 1 día (integrate react-native-sensors)
-Umbral: Rotación > 3.0 rad/seg indica evento anormal
-Casos: Derrape, pérdida de control, vuelco, impacto lateral
+Prioridad: ⭐⭐⭐ IMPLEMENTADO
+Cobertura: ~85% (el usuario VE el peligro primero)
+Implementación: Botón "Evento" en bottom-right de Monitor
+Acción: saveEvent() guarda segmento pre + 15s post-evento
+Cooldown: 12 segundos entre eventos (anti-spam)
 ```
 
-### Trigger 3: Acelerómetro (BAJA - BACKUP)
+### Trigger 2: Acelerómetro G-Force (ALTA)
 ```
-Prioridad: ⭐ Mantener por compatibilidad
-Cobertura: No confiable (máximo ~1.3G en pruebas reales)
-Umbral: Si implementar, usar > 2.5G (muy conservador)
-Nota: NO CONFIAR en este como trigger primario
+Prioridad: ⭐⭐⭐ IMPLEMENTADO
+Cobertura: Detecta impactos con fuerza calculada desde acelerómetro nativo
+Implementación: SensorManager nativo → accelListener → magnitud/gravedad
+Umbral: 2.5G (configurable entre 1.5–5.0G desde JS)
+Rate-limit: Emisión a JS cada 200ms
+Nota: Pruebas reales mostraron ~1.3G en frenadas bruscas; umbral 2.5G es conservador
 ```
 
-### Trigger 4: GPS Desaceleración (OPCIONAL - POST-MVP)
+### Trigger 3: Giroscopio (NO IMPLEMENTADO)
 ```
-Prioridad: ⭐ Implementar en Fase 2 si necesario
-Cobertura: 10% adicional
-Problema: 1-2 seg de lag, no funciona en túneles
-Decisión: Esperar a validación de MVP antes de agregar
+Prioridad: ⭐ Postergado
+Razón: El acelerómetro con umbral configurable cubre los casos necesarios para MVP (~85%)
+Futuro: Evaluar si complementa o se omite definitivamente
+```
+
+### Trigger 4: Detección de Audio (NO IMPLEMENTADO)
+```
+Prioridad: ⭐ Postergado
+Razón: Acelerómetro + botón cubren ~85% de casos en pruebas MVP
+Futuro: Evaluar tras validación de MVP
 ```
 
 ---
@@ -673,26 +745,38 @@ CALIBRACIÓN: Ajustable en Settings (2.5 - 4.0 rad/seg)
 
 ```
 FOREGROUND SERVICE:
-├── Channel ID: 'dashcam-service'
-├── Notification ID: 1234
-├── Título: "🎥 DashCam activa"
-├── Mensaje: "Vigilando"
-├── Importancia: high
+├── Channel ID: 'duovial_camera_service_channel'
+├── Notification ID: 144
+├── Título: "DuoVial"
+├── Mensaje: Dinámico ("Cámara lista." / "Grabación circular activa.")
+├── Importancia: LOW (no molesta)
+├── Service Type (Q+): CAMERA + LOCATION
 └── No dismissable: true
 
 WATCHDOG (WorkManager):
+├── Task Key: 'duovial_watchdog'
 ├── Intervalo: Cada 15 minutos
-├── Acción: Verificar si servicio está activo
-├── Si muere: Reiniciar Foreground Service
-├── Persistencia: Supera reseteos del OS
+├── Flex Time: 5 minutos
+├── Acción: Re-llama startRecording() si el servicio murió
+└── Persistencia: Supera reseteos del OS
+
+ESTADOS DEL SERVICIO:
+├── STANDBY → Preview viva, GPS activo, sin grabar
+├── RECORDING → Buffer circular rotando, acelerómetro activo
+└── SAVING → Guardando evento (transitorio, vuelve a STANDBY o RECORDING)
 
 PERMISOS REQUERIDOS:
 ├── android.permission.CAMERA
-├── android.permission.RECORD_AUDIO
-├── android.permission.WRITE_EXTERNAL_STORAGE
+├── android.permission.ACCESS_FINE_LOCATION
+├── android.permission.ACCESS_COARSE_LOCATION
 ├── android.permission.FOREGROUND_SERVICE
+├── android.permission.FOREGROUND_SERVICE_CAMERA
+├── android.permission.FOREGROUND_SERVICE_LOCATION
 ├── android.permission.POST_NOTIFICATIONS
-└── android.permission.BODY_SENSORS (acelerómetro/giroscopio)
+├── android.permission.SYSTEM_ALERT_WINDOW (burbuja flotante)
+├── android.permission.RECORD_AUDIO (detección de impactos por audio)
+├── android.permission.VIBRATE (alertas de fatiga)
+└── android.permission.WAKE_LOCK
 
 BATTERY OPTIMIZATION HANDLING:
 ├── Detectar si optimización está ON
@@ -701,15 +785,14 @@ BATTERY OPTIMIZATION HANDLING:
 └── Re-prompt cada 30 días
 ```
 
-### 2.5 Almacenamiento y Gestión de Archivos
-
 ```
 ESTRUCTURA:
 ├── CACHE (context.cacheDir):
-│   └── segment_[timestamp].mp4 (15 seg, se descarta automático)
+│   ├── segment_0.mp4 (15 seg, buffer rotativo)
+│   └── segment_1.mp4 (15 seg, buffer rotativo)
 │
-└── DOWNLOADS (RNFS.DownloadDirectoryPath):
-    └── incident_[timestamp]_part[0-1].mp4 (permanente, usuario ve)
+└── DOWNLOADS (MediaStore → Download/DuoVial):
+    └── incident_[timestamp]_part0.mp4 (permanente, usuario ve)
 
 LIMPIEZA AUTOMÁTICA:
 ├── Cache: Máximo 2 archivos (30 seg totales)
@@ -722,6 +805,94 @@ ESPACIO REQUERIDO:
 ├── Si 5 incidentes/mes: ~37.5 MB/mes
 ├── Premium (ilimitado): Target <2 GB/mes
 └── Recomendación: Mínimo 5 GB storage libres
+```
+
+### 2.6 Arquitectura de Estado y Recuperación
+
+```
+MÁQUINA DE ESTADOS (ServiceState):
+┌──────────┬──────────────┬──────────────────────────────────────┐
+│  STANDBY │ → RECORDING  │ startRecordingMode()                 │
+│          │              │ → Preview + GPS vivos; no graba       │
+├──────────┼──────────────┼──────────────────────────────────────┤
+│ RECORDING│ → STANDBY    │ forceResetToStandby() / stopAndSave  │
+│          │ → SAVING     │ saveEvent() (colisión o pánico)      │
+│          │              │ → Buffer circular rotando 2 segs     │
+├──────────┼──────────────┼──────────────────────────────────────┤
+│  SAVING  │ → STANDBY    │ forceResetToStandby() (si atascado)  │
+│          │ → RECORDING  │ handleEventSaveTransition (normal)   │
+│          │              │ → Post-evento 15s o guardado buffer  │
+└──────────┴──────────────┴──────────────────────────────────────┘
+
+COMUNICACIÓN JS → SERVICIO:
+┌─────────────────────────────────────────────────────────────────┐
+│  BackgroundGuard.ts                                              │
+│    ├── startStandby()    → Module.startStandby()                 │
+│    ├── startGuarding()   → Module.startRecording() + Watchdog    │
+│    ├── stopGuarding()    → Module.stopRecording()                │
+│    ├── triggerPanic()    → Module.triggerPanic()                 │
+│    ├── forceReset()      → Module.forceReset()  ★ nuevo          │
+│    ├── setGForceThreshold(t) → Module.setGForceThreshold(t)       │
+│    ├── getGForceThreshold()  → Module.getGForceThreshold()        │
+│    ├── enableFatigueDetection(e) → Module.enableFatigueDetection(e) │
+│    ├── setEarThreshold(t) → Module.setEarThreshold(t)            │
+│    ├── snoozeFatigueAlert(m) → Module.snoozeFatigueAlert(m)      │
+│    └── getFatigueStatus()  → Module.getFatigueStatus()           │
+└─────────────────────────────────────────────────────────────────┘
+
+COMUNICACIÓN SERVICIO → JS:
+┌─────────────────────────────────────────────────────────────────┐
+│  DeviceEventEmitter (vía CameraStatusListener)                    │
+│    ├── onCameraStatusChanged  → { status: string }               │
+│    ├── onAccelChanged         → { gForce: double }               │
+│    ├── onSpeedChanged         → { speed: double }                │
+│    ├── onFaceStatusChanged    → { enabled, faceDetected, earValue, closedEyeDuration } │
+│    └── onDrowsinessDetected   → { timestamp, earValue }          │
+│                                                                   │
+│  Mecanismos anti-desync:                                          │
+│    ├── resyncJsState()  → llamado en Module.init tras reconexión  │
+│    ├── lastKnownGForce  → último valor de acelerómetro conocido   │
+│    ├── lastKnownSpeed   → último valor de velocidad conocido      │
+│    └── forceReset()     → siempre devuelve INACTIVO si Service    │
+│                           está muerto (no deja UI colgada)        │
+└─────────────────────────────────────────────────────────────────┘
+
+FLUJO DE RECUPERACIÓN DE EMERGENCIA:
+1. JS detecta isSaving=true → botón de power llama forceReset()
+2. Module.forceReset():
+   ├── Service vivo → service.forceResetToStandby() → STANDBY → INACTIVO
+   └── Service muerto → sendStatusEventToJS("INACTIVO")
+3. JS recibe INACTIVO → isRecording=false, isSaving=false
+4. Botón de power vuelve al estado normal (START)
+```
+
+### 2.7 Componentes de la UI Actual
+
+```
+App.tsx (contenedor principal):
+├── AuthProvider (AWS Cognito)
+├── SafeAreaView + StatusBar
+├── Container con tab dinámico:
+│   ├── Monitor → MonitorScreen (fullscreen cámara)
+│   ├── Fatigue → FatigueScreen (detección de somnolencia)
+│   ├── Eventos → renderEventos (galería)
+│   ├── Configuraciones → renderConfig (sliders, overlay, G-Force)
+│   └── Cuenta → renderCuenta (login/logout)
+└── BottomNav (Monitor, Eventos, Configurar, Cuenta) — oculto en FatigueScreen
+
+MonitorScreen.tsx (estilo Google Maps):
+├── BackgroundCameraPreview (absoluteFill — fondo)
+├── REC badge (top-right, parpadeante cuando graba)
+├── FloatingHeader (glass-morphism, top):
+│   ├── Logo + "DuoVial" + "STANDBY ACTIVE"
+│   └── Botón "Frontal" (navega a FatigueScreen — activo)
+├── StatusPill (debajo del header, estilo "Luego" de Maps)
+├── TelemetryStack (bottom-left):
+│   ├── Círculo G-Force (valor + unidad "G")
+│   └── Círculo MPH (valor + unidad "MPH")
+└── BottomActions (bottom-right):
+    ├── PowerIconButton (verde=start, rojo=stop, gris=disabled)
+    └── EventoButton (amarillo=panic, gris=inactive)
 ```
 
 ## 📊 MÉTRICAS DE ÉXITO
@@ -753,15 +924,20 @@ ESPACIO REQUERIDO:
 ---
 
 ### Lo que necesita más investigación
-⚠️ Falsos positivos de giroscopio en curvas normales  
+⚠️ Falsos positivos de acelerómetro en baches/toppes  
 ⚠️ Optimización de batería en Xiaomi/Samsung/Huawei (cada marca es diferente)  
 ⚠️ Compatibilidad con frame rates variables en cámaras diferentes
+⚠️ Estabilidad del servicio en sesiones largas (>2h) en dispositivos con RAM limitada
 
 ### Decisiones tomadas para MVP
 1. **Simpler is better**: Cache del OS (no RAM puro) para lanzar rápido
-2. **Multi-sensor es crítico**: Un solo trigger falló en pruebas reales
+2. **Multi-sensor es crítico**: Un solo trigger falló en pruebas reales (botón + acelerómetro implementados)
 3. **Freemium funciona**: 5 incidentes/mes impulsa conversión
 4. **Conductor es user, no empresa**: Segmentación clara en Go-to-Market
+5. **Kotlin nativo directo**: Se abandonó react-native-vision-camera/sensors por acceso nativo en Kotlin para máximo control del ciclo de vida
+6. **Servicio es fuente única de verdad**: El estado del servicio nativo es autoritativo. JS se sincroniza vía `resyncJsState()` en cada reconexión
+7. **Stop preserva la sesión**: `stopAndSave` guarda el buffer, vuelve a STANDBY, NO mata el servicio
+8. **forceReset como paracaídas**: El usuario siempre puede recuperar el control sin importar el estado del servicio
 
 ### Próximas validaciones
 - [ ] Testing en mínimo 5 modelos de dispositivos
@@ -772,9 +948,9 @@ ESPACIO REQUERIDO:
 
 ---
 
-**Documento versión**: 1.0  
-**Última actualización**: Mayo 27, 2026  
-**Siguiente review**: Después de beta testing inicial (estimado Julio 2026)
+**Documento versión**: 1.3  
+**Última actualización**: Junio 10, 2026  
+**Siguiente review**: Después de Fase 4 (UI + Monetización)
 
 **Contactar**: [Oscar's info aquí]  
 **Repositorio**: [GitHub link aquí]

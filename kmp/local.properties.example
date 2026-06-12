@@ -1,0 +1,4 @@
+# Android SDK location
+# Copy this file to local.properties and set your SDK path
+# Example: sdk.dir=C\:\\Users\\camip\\AppData\\Local\\Android\\Sdk
+sdk.dir=YOUR_ANDROID_SDK_PATH_HERE
