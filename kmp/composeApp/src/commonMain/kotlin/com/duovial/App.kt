@@ -122,7 +122,6 @@ fun DuoVialApp(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
                     .padding(padding)
             ) {
                 when {

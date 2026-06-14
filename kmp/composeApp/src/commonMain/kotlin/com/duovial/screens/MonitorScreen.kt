@@ -1,6 +1,7 @@
 package com.duovial.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,17 +15,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,11 +44,15 @@ import com.duovial.state.CameraServiceManager
 import com.duovial.state.CameraStatus
 import com.duovial.theme.DuoVialAmber
 import com.duovial.theme.DuoVialBackground
+import com.duovial.theme.DuoVialBorder
+import com.duovial.theme.DuoVialCardBackground
 import com.duovial.theme.DuoVialNeonGreen
 import com.duovial.theme.DuoVialNeonRed
-import com.duovial.theme.DuoVialSurface
 import com.duovial.theme.DuoVialTextPrimary
 import com.duovial.theme.DuoVialTextSecondary
+import duovialkmp.composeapp.generated.resources.Res
+import duovialkmp.composeapp.generated.resources.ic_duovial_logo
+import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun MonitorScreen(
@@ -61,7 +64,7 @@ fun MonitorScreen(
     val isSaving = cameraState.status == CameraStatus.GUARDANDO ||
         cameraState.status == CameraStatus.INICIANDO
     val gForce = cameraState.gForce
-    val speed = cameraState.speedKph.toInt()
+    val speedMph = (cameraState.speedKph * 0.621371).toInt()
     val statusLabel = when (cameraState.status) {
         CameraStatus.INACTIVO -> "Vigilante apagado"
         CameraStatus.INICIANDO -> "Iniciando DuoVial..."
@@ -74,7 +77,7 @@ fun MonitorScreen(
         CameraStatus.INICIANDO -> DuoVialAmber
         CameraStatus.GUARDANDO -> DuoVialAmber
         CameraStatus.ERROR -> DuoVialNeonRed
-        else -> DuoVialTextSecondary
+        else -> Color.White.copy(alpha = 0.85f)
     }
     val gForceColor = when {
         gForce >= 3.5 -> DuoVialNeonRed
@@ -83,161 +86,206 @@ fun MonitorScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(DuoVialBackground)) {
-        CameraPreview(modifier = Modifier.fillMaxSize())
 
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .align(Alignment.BottomCenter)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, DuoVialBackground.copy(alpha = 0.9f))
-                    )
-                )
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxSize()
+                .padding(top = 64.dp, start = 12.dp, end = 12.dp, bottom = 16.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.Black)
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("G", style = MaterialTheme.typography.labelSmall, color = DuoVialTextSecondary)
-                Text(
-                    text = gForce.formatDecimal(2),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                    color = gForceColor, fontWeight = FontWeight.W900
-                )
-            }
+            CameraPreview(modifier = Modifier.fillMaxSize())
 
-            AnimatedVisibility(visible = isRecording && !isSaving) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, DuoVialBackground.copy(alpha = 0.85f))
+                        )
+                    )
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(DuoVialNeonRed.copy(alpha = 0.15f))
-                        .border(1.dp, DuoVialNeonRed.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(modifier = Modifier.size(8.dp).background(DuoVialNeonRed, CircleShape))
-                    Spacer(Modifier.width(6.dp))
-                    Text("REC", style = MaterialTheme.typography.labelMedium, color = DuoVialNeonRed)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "G",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = gForce.formatDecimal(2),
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
+                            color = gForceColor,
+                            fontWeight = FontWeight.W900
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = statusLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = statusColor,
+                            fontWeight = FontWeight.W700
+                        )
+                        AnimatedVisibility(visible = isRecording && !isSaving) {
+                            Text(
+                                text = "Grabando",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = DuoVialNeonRed,
+                                fontWeight = FontWeight.W700
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "MPH",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = "$speedMph",
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
+                            color = DuoVialTextPrimary,
+                            fontWeight = FontWeight.W900
+                        )
+                    }
                 }
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("km/h", style = MaterialTheme.typography.labelSmall, color = DuoVialTextSecondary)
-                Text(
-                    text = "$speed",
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                    color = DuoVialTextPrimary, fontWeight = FontWeight.W900
-                )
-            }
-        }
-
-        Text(
-            text = statusLabel,
-            style = MaterialTheme.typography.bodyMedium,
-            color = statusColor,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 70.dp)
-        )
-
-        // Panic button area (clickable)
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(160.dp)
-                .clickable(enabled = isRecording && !isSaving) {
-                    serviceManager?.triggerPanic()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(140.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when {
-                            isSaving -> DuoVialAmber.copy(alpha = 0.2f)
-                            isRecording -> DuoVialNeonGreen.copy(alpha = 0.15f)
-                            else -> DuoVialTextSecondary.copy(alpha = 0.1f)
-                        }
-                    )
-            )
-            Box(
-                modifier = Modifier
-                    .size(100.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when {
-                            isSaving -> DuoVialAmber
-                            isRecording -> DuoVialNeonGreen
-                            else -> DuoVialSurface
-                        }
-                    ),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = when {
-                        isSaving -> "GUARDANDO"
-                        isRecording -> "PANICO"
-                        else -> "OFF"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = when {
-                        isRecording || isSaving -> DuoVialBackground
-                        else -> DuoVialTextSecondary
-                    },
-                    fontWeight = FontWeight.W900
-                )
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                        .clickable(enabled = !isSaving) {
+                            if (isRecording) serviceManager?.stopRecording()
+                            else serviceManager?.startRecording()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isRecording) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                        contentDescription = if (isRecording) "Detener" else "Iniciar",
+                        tint = if (isRecording) DuoVialNeonRed else DuoVialNeonGreen,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(30.dp))
+                        .clickable(enabled = isRecording && !isSaving) {
+                            serviceManager?.triggerPanic()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isSaving) "GUARDANDO..." else "EVENTO",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 16.sp, letterSpacing = 2.sp),
+                        color = if (isRecording) DuoVialAmber else Color.White.copy(alpha = 0.5f),
+                        fontWeight = FontWeight.W900
+                    )
+                }
             }
         }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.TopCenter)
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = onOpenFatigue, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    Icons.Outlined.Visibility, "Deteccion Frontal",
-                    tint = DuoVialTextSecondary, modifier = Modifier.size(28.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(Res.drawable.ic_duovial_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp)
                 )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "DuoVial",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
+                    color = DuoVialTextPrimary,
+                    fontWeight = FontWeight.W900
+                )
+                if (isRecording && !isSaving) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(DuoVialNeonRed)
+                    )
+                }
             }
 
-            Button(
-                onClick = {
-                    if (isRecording) serviceManager?.stopRecording()
-                    else if (!isSaving) serviceManager?.startRecording()
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRecording) DuoVialNeonRed.copy(alpha = 0.2f)
-                    else DuoVialNeonGreen.copy(alpha = 0.2f)
-                ),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.height(48.dp)
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(DuoVialNeonGreen.copy(alpha = 0.15f))
+                    .border(1.5.dp, DuoVialNeonGreen.copy(alpha = 0.4f), CircleShape)
+                    .clickable { onOpenFatigue() },
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    if (isRecording) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-                    if (isRecording) "Detener" else "Iniciar",
-                    tint = if (isRecording) DuoVialNeonRed else DuoVialNeonGreen,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (isRecording) "DETENER" else "INICIAR",
-                    color = if (isRecording) DuoVialNeonRed else DuoVialNeonGreen,
-                    style = MaterialTheme.typography.labelMedium
+                    imageVector = Icons.Outlined.Visibility,
+                    contentDescription = "Abrir deteccion de somnolencia",
+                    tint = DuoVialNeonGreen,
+                    modifier = Modifier.size(22.dp)
                 )
             }
-
-            Spacer(Modifier.width(48.dp))
         }
     }
 }
