@@ -250,7 +250,7 @@ fun MonitorScreen(
                 Image(
                     painter = painterResource(Res.drawable.ic_duovial_logo),
                     contentDescription = null,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(32.dp).clip(CircleShape)
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(

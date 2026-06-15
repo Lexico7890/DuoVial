@@ -1,7 +1,7 @@
 # 📋 CONTEXT.md - DASH CAM INTELIGENTE PARA CONDUCTORES
 
-**Última actualización**: Junio 10, 2026  
-**Estado del proyecto**: MVP en desarrollo — Fases 1-3 completadas, Fase 4 pendiente  
+**Última actualización**: Junio 15, 2026  
+**Estado del proyecto**: MVP en desarrollo — Fases 1-3 completadas, Fase 3B (Anti-somnolencia refactorizada) en progreso, Fase 4 pendiente  
 **Audiencia**: Agentes de IA, desarrolladores, stakeholders técnicos
 
 ---
@@ -15,17 +15,18 @@
 5. [Fases de Desarrollo](#fases-de-desarrollo)
 6. [Decisiones Técnicas Clave](#decisiones-técnicas-clave)
 7. [Sistema de Detección de Eventos](#sistema-de-detección-de-eventos)
-8. [Consumo de Recursos y Optimizaciones](#consumo-de-recursos-y-optimizaciones)
-9. [Segmentación de Usuarios](#segmentación-de-usuarios)
-10. [Estrategia Go-to-Market](#estrategia-go-to-market)
-11. [Riesgos y Mitigaciones](#riesgos-y-mitigaciones)
-12. [Especificaciones Técnicas Detalladas](#especificaciones-técnicas-detalladas)
-13. [Métricas de Éxito](#métricas-de-éxito)
-14. [FAQ Técnico](#faq-técnico)
+8. [Anti-Somnolencia y Wearables](#anti-somnolencia-y-wearables)
+9. [Consumo de Recursos y Optimizaciones](#consumo-de-recursos-y-optimizaciones)
+10. [Segmentación de Usuarios](#segmentación-de-usuarios)
+11. [Estrategia Go-to-Market](#estrategia-go-to-market)
+12. [Riesgos y Mitigaciones](#riesgos-y-mitigaciones)
+13. [Especificaciones Técnicas Detalladas](#especificaciones-técnicas-detalladas)
+14. [Métricas de Éxito](#métricas-de-éxito)
+15. [FAQ Técnico](#faq-técnico)
 
 ---
 
-## 🎯 VISIÓN GENERAL DEL PROYECTO
+## 🎯 VISIÓN GENERAL DEL PROYyecto
 
 ### Qué es
 Una aplicación Android que convierte el teléfono del usuario en una **dash cam inteligente de bajo consumo**.
@@ -42,10 +43,10 @@ El creador ha vivido personalmente el problema de los accidentes sin evidencia. 
 **Segmento futuro**: Empresas de flota (B2B)
 
 ### Qué la hace diferente
-- **Buffer circular en RAM**: No graba continuamente, solo guarda los 30 segundos alrededor de un evento
+- **Buffer circular en cache del OS**: No graba continuamente, solo guarda los 30 segundos alrededor de un evento
 - **Detección multi-sensor**: No depende de un solo trigger (acelerómetro falló en pruebas reales)
 - **Bajo consumo**: 40% menos batería que grabación continua
-- **Anti-somnolencia integrada**: Prevención de accidentes + registro pasivo
+- **Anti-somnolencia integrada**: Prevención de accidentes con cámara frontal + wearables compatibles
 
 ### Qué NO es
 - ❌ No es una dash cam de hardware (es software en el teléfono)
@@ -70,11 +71,13 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 4. **Soluciones inadecuadas**:
    - Apps tradicionales graban TODO (matan batería, sobrecalientan, llenan almacenamiento)
    - Sensores del teléfono no son confiables para detectar impactos
+   - Mantener cámara frontal siempre activa para detectar somnolencia consume batería y genera problemas de privacidad
 
 ### Datos de las pruebas
 - **Prueba de acelerómetro**: En frenadas bruscas reales solo registró 1.3G (umbral no confiable)
 - **Prueba de velocidad GPS**: La desaceleración medida por GPS tiene 1-2 seg de lag (demasiado lento)
-- **Conclusión**: No se puede depender de un único sensor para detección
+- **Prueba de cámara frontal continua**: Alto consumo de batería y riesgo de sobre-calentamiento; no viable para detección en background
+- **Conclusión**: No se puede depender de un único sensor para detección, y la cámara frontal no debe estar siempre activa
 
 ---
 
@@ -84,16 +87,17 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 
 #### 1. **Modo Vigilante (Buffer Circular)**
 - Cámara trasera captura video continuamente
-- **NO escribe a disco** (o minimal escritura a cache del OS)
-- Mantiene solo los últimos 15 segundos en RAM/cache
-- Cuando detecta un evento (impacto, audio, rotación), guarda esos 15 seg y los 15 segundos posteriores al evento creando dos videos de 15 segundos cada uno
+- **NO escribe a disco** (usa cache optimizada del OS)
+- Mantiene solo los últimos 15 segundos en cache
+- Cuando detecta un evento (impacto, botón de pánico), guarda esos 15 seg y los 15 segundos posteriores al evento creando dos videos de 15 segundos cada uno
 - Los 15 seg más viejos se descartan automáticamente
+- Funciona en background vía Foreground Service
 
-#### 2. **Anti-Somnolencia (Detección Facial)**
-- Cámara frontal analiza el rostro del conductor
-- Mide parpadeo (Eye Aspect Ratio)
-- Si ojos cerrados > 2 segundos → alerta sonora + vibración
-- **NO guarda video** (solo analiza en tiempo real y descarta)
+#### 2. **Anti-Somnolencia (Detección Facial + Wearables)**
+- **Cámara frontal**: activa SOLO cuando el usuario está en `FatigueScreen`. Analiza el rostro del conductor con ML Kit, mide parpadeo (Eye Aspect Ratio) y emite alerta si ojos cerrados > umbral configurable.
+- **Wearables compatibles**: fuente primaria de detección de fatiga en background. Lee datos de salud (frecuencia cardíaca, HRV, actividad) vía Health Connect.
+- **NO guarda video** de la cámara frontal (solo analiza en tiempo real y descarta)
+- Si el dispositivo no soporta cámaras concurrentes, la app sugiere usar un wearable o pausa el modo Vigilante mientras se usa la cámara frontal
 
 #### 3. **Gestión de Suscripciones**
 - Plan gratis: Buffer circular limitado a 5 incidentes/mes, sin exportación
@@ -106,22 +110,23 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 
 ### Stack tecnológico actual
 
-> **Nota**: La implementación real divergió del plan original (react-native-vision-camera, react-native-sensors). Se optó por acceso nativo directo en Kotlin para máximo control y rendimiento.
+> **Nota**: La implementación real divergió del plan original (React Native / Expo). El proyecto actual usa **Kotlin Multiplatform + Compose Multiplatform** para máximo control, rendimiento y mantenibilidad. Todo el acceso nativo está en Kotlin.
 
 | Capa | Tecnología | Propósito |
 |------|-----------|----------|
-| **Frontend** | React Native (Expo SDK 54) | UI, navegación, estado |
-| **Cámara** | CameraX nativo (Kotlin) + PreviewView | Acceso directo a la cámara trasera, buffer circular |
+| **Frontend** | Compose Multiplatform (Kotlin) | UI, navegación, estado |
+| **Cámara trasera** | CameraX nativo (Kotlin) + PreviewView | Modo Vigilante, buffer circular, preview |
+| **Cámara frontal** | CameraX nativo (Kotlin) + PreviewView + ImageAnalysis | Anti-somnolencia en `FatigueScreen` |
 | **Sensores** | SensorManager nativo (Kotlin) | Acelerómetro (G-Force) |
-| **GPS** | LocationManager nativo (Kotlin) | Velocímetro (MPH) |
-| **Background** | LifecycleService + Foreground Service (Kotlin) | Supervivencia del servicio |
-| **Persistencia** | WorkManager (@rn-native-utils/workmanager) | Watchdog que revive el servicio |
-| **Puente RN→Nativo** | DeviceEventEmitter + NativeModules | Eventos de estado y telemetría en tiempo real |
-| **Almacenamiento** | MediaStore + context.cacheDir (Android nativo) | Segmentos de video temporales y exportación |
-| **IA Facial** | ML Kit Face Detection (Android nativo) | Detección de somnolencia (EAR) — activa |
-| **Build** | EAS Build (Expo) | APK firmado en la nube |
-| **Auth** | AWS Cognito (aws-amplify) | Login/logout (Cuenta) |
-| **Iconos** | @expo/vector-icons (MaterialCommunityIcons) | Iconografía de la UI |
+| **GPS** | LocationManager nativo (Kotlin) | Velocímetro (MPH/KPH) |
+| **Background** | LifecycleService + Foreground Service (Kotlin) | Supervivencia del servicio de vigilancia |
+| **Persistencia local** | Multiplatform Settings (SharedPreferences) | Configuración de usuario |
+| **Watchdog** | WorkManager (Kotlin) | Revive el servicio si Android lo mata |
+| **Comunicación UI↔Servicio** | StateFlow / SharedFlow + callbacks nativos | Eventos de estado y telemetría en tiempo real |
+| **IA Facial** | ML Kit Face Detection (Android nativo) | Detección de somnolencia (EAR) |
+| **Wearables** | Health Connect (Android nativo) | Lectura de datos de salud para fatiga en background |
+| **Build** | Gradle + Android Studio | APK firmado localmente |
+| **Auth** | AWS Cognito (aws-amplify Kotlin) | Login/logout (Cuenta) |
 
 ### Flujo de datos
 
@@ -131,29 +136,38 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 │ 1080p @ 30fps → Encoder H.264 (2 Mbps) → Buffer Circular    │
 │                                                              │
 │ Almacenamiento: Cache del sistema Android                    │
-│ Duración: Últimos 15 segundos (2 segmentos de 15 seg)       │
+│ Duración: Últimos 30 segundos (2 segmentos de 15 seg)       │
 │ Escritura: Solo cuando hay evento (trigger)                  │
+│ Background: Sí, vía Foreground Service                       │
 └─────────────────────────────────────────────────────────────┘
                             ↓
         ┌───────────────────┼───────────────────┐
         ↓                                       ↓
-    BOTÓN PÁNICO                           GIROSCOPIO
-    (Manual)                               (Rotación)
+     BOTÓN PÁNICO                           ACELERÓMETRO
+     (Manual)                               (G-Force)
         ↓                                       ↓
         └───────────────────┼───────────────────┘
                             ↓
                   ¿EVENTO DETECTADO?
                         Sí → Guardar 15 seg previos y 15 seg posteriores a Downloads
                         No → Descartar y continuar
-                            ↓
+
 ┌─────────────────────────────────────────────────────────────┐
-│                    CÁMARA FRONTAL (Anti-Somnolencia)         │
-│ 640×480 @ 10fps → Camera2 ImageReader → ML Kit Face Det.    │
-│                                                              │
-│ Selección: Solo conductor (mayor x en raw frame)             │
-│ Almacenamiento: NINGUNO (frames se descartan)               │
-│ Cálculo: EAR en tiempo real                                 │
-│ Trigger: EAR < 0.2 × > 2 segundos → VIBRACIÓN + SONIDO    │
+│       ANTI-SOMNOLENCIA (múltiples fuentes)                   │
+├─────────────────────────────────────────────────────────────┤
+│ Nivel 1: Cámara frontal (ML Kit EAR)                        │
+│   • Activa solo en FatigueScreen                             │
+│   • 640×480 @ 10fps, NO guarda video                         │
+│   • Alerta inmediata (vibración + sonido)                    │
+├─────────────────────────────────────────────────────────────┤
+│ Nivel 2: Wearable vía Health Connect                        │
+│   • FC, HRV, movimiento                                      │
+│   • Funciona en background                                   │
+│   • Menor consumo que cámara frontal siempre activa          │
+├─────────────────────────────────────────────────────────────┤
+│ Fallback: Si no hay wearable ni cámaras concurrentes         │
+│   • Sugerir comprar wearable compatible                      │
+│   • Mostrar lista de dispositivos recomendados               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -162,12 +176,12 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 ```
 Android File System:
 ├── context.cacheDir/
-│   ├── segment_15s_001.mp4 (descarta después)
-│   └── segment_15s_002.mp4 (descarta después)
+│   ├── segment_0.mp4 (descarta después)
+│   └── segment_1.mp4 (descarta después)
 │
-└── Downloads/
-    └── incident_1716835200_part0.mp4 (guardado permanente)
-    └── incident_1716835200_part1.mp4 (guardado permanente)
+└── Downloads/DuoVial/
+    └── incident_[timestamp]_part0.mp4 (guardado permanente)
+    └── incident_[timestamp]_part1.mp4 (guardado permanente)
 ```
 
 ---
@@ -190,74 +204,63 @@ Android File System:
 
 ### FASE 2: Los Sentidos (Buffer Circular + Detección Multi-Sensor)
 **Objetivo**: Implementar el sistema de bajo consumo  
-**Estado**: ✅ COMPLETADA (con divergencias del plan original)  
+**Estado**: ✅ COMPLETADA  
 **Tareas**:
-- [x] Integrar CameraX nativa (Kotlin) con PreviewView — **NO react-native-vision-camera**
+- [x] Integrar CameraX nativa (Kotlin) con PreviewView
 - [x] Configurar bitrate a 2 Mbps (HD) vía Recorder de CameraX
 - [x] Buffer circular en cacheDir (2 segmentos × 15 seg)
 - [x] Implementar botón de pánico / Evento (trigger manual)
 - [x] Implementar detección de acelerómetro (G-Force > 2.5G configurable)
-- [x] Umbral G-Force configurable desde JS (1.5–5.0G)
-- [x] Velocímetro GPS (MPH) desacoplado del sensor manager — vivo en Standby
+- [x] Umbral G-Force configurable desde UI (1.5–5.0G)
+- [x] Velocímetro GPS (KPH/MPH) desacoplado del sensor manager — vivo en Standby
 - [ ] ~~Giroscopio~~ (sustituido por acelerómetro configurable, más fiable en pruebas)
 - [ ] ~~Detección de audio~~ (pospuesto: acelerómetro + botón cubren ~85% en pruebas)
 - [ ] Testing formal de consumo de batería
-
-**Divergencias del plan**: Se sustituyó react-native-vision-camera y react-native-sensors por acceso nativo directo en Kotlin (CameraX, SensorManager, LocationManager). Esto dio mejor control y rendimiento a costa de más complejidad en el puente RN-nativo.
 
 ---
 
 ### FASE 3: El Vigilante (Detección de Somnolencia)
 **Objetivo**: Alertar al conductor si se duerme  
-**Estado**: ✅ COMPLETADA  
-**Arquitectura**: 
-- Cámara frontal: Android Camera2 API (ImageReader) separado de CameraX
-- Face Detection: ML Kit (`com.google.mlkit:face-detection:16.1.6`)
-- Alertas: Nativas (Kotlin) — vibración + sonido inmediatos
-- UI: Pantalla dedicada (FatigueScreen) accesible desde botón "Frontal"
-- Selección: Solo conductor (rostro con mayor x en frame raw = izquierda en preview espejado)
+**Estado**: ✅ COMPLETADA (v1 con Camera2 manual)  
+**Nota**: La implementación inicial usa Camera2 manual con `ImageReader` + `TextureView`. Se detectó un bug crítico donde el preview frontal se congela tras ~1 segundo por problemas de gestión del `Surface`. Esta fase será refactorizada en la **Fase 3B**.
 
-**Tareas**:
-- [x] Agregar dependencia ML Kit en `android/app/build.gradle`
+**Tareas completadas (v1)**:
+- [x] Agregar dependencia ML Kit
 - [x] Crear `FrontFaceDetector.kt` — cámara frontal + ML Kit + EAR + alertas
 - [x] Integrar `FrontFaceDetector` en `BackgroundCameraService.kt`
-- [x] Agregar métodos bridge nativo→JS en `BackgroundCameraModule.kt`
-- [x] Agregar métodos JS en `BackgroundGuard.ts`
-- [x] Crear `FatigueScreen.tsx` — pantalla dedicada con preview + configuración
-- [x] Modificar `MonitorScreen.tsx` — botón "Frontal" navega a FatigueScreen
-- [x] Modificar `App.tsx` — estado fatiga + navegación + listeners
-- [ ] Persistir configuración (AsyncStorage) — pendiente para Fase 4
+- [x] Crear `FatigueScreen.kt` — pantalla dedicada con preview + configuración
+- [x] Modificar `MonitorScreen.kt` — botón "Frontal" navega a FatigueScreen
+- [x] ML Kit detecta rostro y calcula EAR en tiempo real
+- [x] Alerta nativa (vibración + sonido) cuando ojos cerrados > umbral
 
-**Especificaciones técnicas**:
-- Resolución cámara frontal: 640×480 (VGA)
-- FPS: 10 fps (suficiente para parpadeo)
-- EAR threshold: 0.2 (ajustable 0.1-0.4)
-- Duration threshold: 2 segundos (ajustable 1-5 seg)
-- Anti-spam: máximo 3 alertas por hora (ajustable 1-5)
-- Snooze: 5 minutos
-- Vibración: Patrón [0, 500, 200, 500] ms
-- Sonido: Alarma 2 segundos
+**Pendientes identificados**:
+- [ ] Migrar cámara frontal de Camera2 manual a CameraX (Preview + ImageAnalysis)
+- [ ] Validar soporte de cámaras concurrentes en el dispositivo
+- [ ] Integrar Health Connect para detección por wearable en background
+- [ ] Persistir configuración completa de fatiga (duration, max alerts, enabled)
+- [ ] Sugerir wearables compatibles cuando no se pueda usar cámara frontal
 
-**Selección del conductor**:
-- ML Kit retorna bounding boxes con `x, y, width, height` para cada rostro
-- Cámara frontal espeja la imagen (como espejo)
-- En frame RAW: conductor está a la DERECHA (alto x)
-- En preview ESPEJADO: conductor aparece a la IZQUIERDA
-- Implementación: `val driverFace = faces.maxByOrNull { it.boundingBox.centerX() }`
+---
+
+### FASE 3B: Anti-Somnolencia Refactorizada (CameraX + Health Connect + Wearables)
+**Objetivo**: Anti-somnolencia estable, eficiente y con soporte para wearables  
+**Estado**: 🚧 EN PROGRESO  
+**Tareas**:
+- [ ] Migrar `FrontFaceDetector` a CameraX (`Preview` + `ImageAnalysis`)
+- [ ] Reemplazar `TextureView` por `PreviewView` en `FrontCameraPreview`
+- [ ] Detectar `cameraManager.concurrentCameraIds` al inicio
+- [ ] Si no hay cámaras concurrentes: pausar modo Vigilante al entrar a FatigueScreen
+- [ ] Integrar Health Connect para lectura de datos de wearables
+- [ ] Implementar lógica de detección de fatiga por wearable (FC/HRV/movimiento)
+- [ ] Persistir y restaurar configuración de fatiga completa
+- [ ] Pantalla de sugerencia de wearables con lista de dispositivos recomendados
+- [ ] Testing en Oppo A80 5G y al menos 2 dispositivos adicionales
 
 **Definición de listo**: 
-- [x] Botón "Frontal" navega a FatigueScreen
-- [x] Cámara frontal se activa solo en FatigueScreen
-- [x] ML Kit detecta rostro y calcula EAR en tiempo real
-- [x] Solo se valida el conductor (izquierda de pantalla)
-- [x] Alerta nativa (vibración + sonido) cuando ojos cerrados > 2s
-- [x] Anti-spam (máx 3 alertas/hora)
-- [x] Snooze 5 min funcional
-- [x] Sliders de configuración funcional
-- [x] Estado visual: 🟢 Abiertos / 🟡 Cerrando / 🔴 Fatiga
-- [ ] Persistencia de configuración entre sesiones (pendiente Fase 4)
-- [x] Sin errores de compilación
-- [x] No interfiere con grabación trasera
+- Preview frontal nunca se congela
+- Detección funciona con cámara frontal en FatigueScreen
+- Si hay wearable compatible, funciona en background sin cámara frontal
+- Si no hay cámaras concurrentes, el usuario recibe mensaje claro y opciones
 
 ---
 
@@ -265,10 +268,10 @@ Android File System:
 **Objetivo**: App pulida para lanzamiento  
 **Duración**: 2-3 semanas  
 **Tareas**:
-- [ ] Pantalla de onboarding (explicar permisos, riesgos de OIS)
+- [ ] Pantalla de onboarding (explicar permisos, riesgos de OIS, wearables)
 - [ ] Integración con RevenueCat (prueba gratis, suscripciones)
 - [ ] Pantalla de "Incidentes Guardados" con preview y acciones (share, delete)
-- [x] Settings con controles de sensibilidad — G-Force threshold slider + overlay permission ya implementados en Configuraciones
+- [x] Settings con controles de sensibilidad — G-Force threshold + overlay permission
 - [ ] Disclaimer sobre desgaste OIS y responsabilidades legales
 - [ ] Testing de flujo completo end-to-end
 
@@ -287,10 +290,10 @@ Android File System:
 - ❌ Batería muere en ~2 horas
 
 **Opción B: Buffer Circular (elegida)**
-- ✅ 0 MB/seg en operación normal (cache optimizado)
 - ✅ ~2 MB/seg durante grabación (bitrate 2 Mbps)
+- ✅ Cache del OS agrupa escrituras
 - ✅ Chip de almacenamiento inactivo = frío
-- ✅ Batería dura 8-10 horas
+- ✅ Batería dura más horas
 - ✅ Solo guarda lo importante
 
 **Justificación**: Un conductor de Uber necesita 6-12 horas de grabación sin agotar batería. La grabación continua es técnicamente inviable.
@@ -299,150 +302,87 @@ Android File System:
 
 ### Decisión 2: ¿Acelerómetro, GPS o múltiples sensores?
 
-**Acelerómetro solo**:
-- ❌ Pruebas reales: máximo 1.3G en frenadas brusca (no confiable)
-- ❌ No detecta choques laterales (teléfono no se mueve)
-- ❌ No detecta cuando estás quieto (choque por atrás)
-- ❌ Cobertura: ~60%
-
-**GPS (desaceleración)**:
-- ⚠️ Funciona pero con 1-2 seg de lag
-- ⚠️ No funciona en túneles/interiores
-- ⚠️ Gasto de batería no justificado para MVPGitHub
-
-**Giroscopio (rotación)**:
-- ✅ Detecta derrapes, volcamientos, giros bruscos
-- ✅ Complementa acelerómetro ortogonalmente
-- ✅ Consumo mínimo
-- ✅ Cobertura: +15%
-
-**Botón Manual (pánico)**:
-- ✅ El usuario VE el peligro antes del impacto
-- ✅ Costo: 2 horas de dev
-- ✅ Cobertura: +30%
-
-**Decisión Final**: **Multi-sensor** (botón + giroscopio)  
-**Cobertura total**: ~95%  
-**Implementación**: MVP con botón + giroscopio
+**Decisión Final**: **Multi-sensor** (botón + acelerómetro configurable)  
+**Implementación**: MVP con botón + acelerómetro
 
 ---
 
-### Decisión 3: ¿React Native Vision Camera vs. código nativo puro?
+### Decisión 3: ¿React Native / Expo vs. Kotlin Multiplatform?
 
-**React Native Vision Camera**:
-- ✅ Abstracción de CameraX (Android 5.0+)
-- ✅ Frame Processors para procesamiento en tiempo real
-- ✅ Soporte para Vision Camera Plugins
-- ⚠️ `startRecording()` escribe a cache del OS (no RAM pura)
+**Plan original**: React Native con Expo SDK 54
 
-**Código Nativo (Kotlin)**:
-- ✅ Control total, máxima performance
-- ❌ Requires especialización en Kotlin/JNI
-- ❌ Curva de aprendizaje alta
-- ❌ Más bugs potenciales
-
-**Decisión Final**: **Código Nativo (Kotlin)** — ver Decisión 6  
-**Justificación**: Se optó por acceso nativo directo para máximo control del ciclo de vida de la cámara, crítico para el buffer circular.
-
----
-
-### Decisión 4: ¿Buffer en RAM puro vs. cache del OS?
-
-**Buffer en RAM puro** (Frame Processors + MediaCodec):
-- ✅ 0 escrituras al disco
-- ❌ Requiere ~3-5 días de desarrollo Kotlin
-- ❌ Mayor complejidad, mayor surface de bugs
-- ❌ Posibles incompatibilidades en dispositivos viejos
-
-**Cache del OS** (startRecording + RNFS):
-- ✅ Escribe a cache (más rápido que disco)
-- ✅ Sistema operativo optimiza I/O automáticamente
-- ✅ Implementable hoy con react-native-vision-camera
-- ⚠️ Sigue escribiendo, no es 0 bytes
-
-**Decisión Final**: **Cache del OS para MVP** (Fase 2: mejora a RAM puro)  
-**Ahorro real**: ~70% menos I/O vs. grabación continua
-
----
-
-### Decisión 5: ¿Merge de segmentos en memoria o archivos separados?
-
-**Archivos separados**:
-- ✅ Más rápido (no requiere FFmpeg)
-- ❌ Usuario ve 2 archivos en lugar de 1
-- ❌ UX confuso
-
-**Merge con FFmpeg**:
-- ✅ Usuario ve 1 archivo limpio
-- ⚠️ Requiere FFmpeg (dependency adicional)
-- ⚠️ Merge toma ~5-10 seg (aceptable)
-
-**Decisión Final**: **Archivos separados para MVP** → Merge en Fase 2  
-**Justificación**: Lanzar primero, iterar después
-
----
-
-### Decisión 6: ¿React Native wrappers vs. Kotlin nativo directo? (REVISADA)
-
-**Plan original**: react-native-vision-camera + react-native-sensors
-
-**Lo que realmente se implementó**: CameraX nativo + SensorManager nativo + LocationManager nativo, todo en Kotlin
+**Lo que realmente se implementó**: Kotlin Multiplatform + Compose Multiplatform, acceso nativo directo en Kotlin
 
 **Razones del cambio**:
-- ✅ Control total sobre el ciclo de vida de la cámara — crítico para el buffer circular
-- ✅ PreviewView nativo sin depender de abstracciones RN
+- ✅ Control total sobre el ciclo de vida de la cámara
+- ✅ PreviewView nativo sin depender de abstracciones de RN
 - ✅ SensorManager nativo permite rate-limiting y filtrado personalizado
-- ✅ LocationManager nativo desacoplado del ciclo de grabación (GPS vivo en Standby)
-- ✅ El puente RN→Kotlin se hace vía `BackgroundCameraModule` + `DeviceEventEmitter`
-- ✅ Sin dependencias npm frágiles para funcionalidad core
+- ✅ LocationManager nativo desacoplado del ciclo de grabación
+- ✅ Comunicación UI↔Nativo vía StateFlow / callbacks sin puentes frágiles
+- ✅ Un solo lenguaje (Kotlin) para UI y lógica nativa
 
-**Tradeoff**: Más código Kotlin que mantener, mayor superficie de bugs en la capa nativa
+**Tradeoff**: Mayor superficie de código nativo, pero sin dependencias npm ni puentes RN.
 
 ---
 
-### Decisión 7: Arquitectura de estado — Servicio como fuente única de verdad
+### Decisión 4: ¿Camera2 manual vs. CameraX para cámara frontal?
 
-**Problema encontrado**: El JS y el servicio nativo pueden desincronizarse. Casos:
-- Hot reload de Metro (el servicio sobrevive, RN se reinicia)
-- Android mata el proceso JS pero el Foreground Service sigue vivo
-- El usuario cierra y reabre la app mientras el servicio graba
+**Opción A: Camera2 manual (implementación actual v1)**
+- ✅ Control total de formato y timing
+- ❌ Manejo manual de `Surface`, sesiones, threads
+- ❌ Bug actual: preview se congela tras ~1 segundo
+- ❌ Código propenso a race conditions
+
+**Opción B: CameraX (elegida para refactorización)**
+- ✅ Manejo automático de `Surface` y lifecycle
+- ✅ `Preview` + `ImageAnalysis` simplifica ML Kit
+- ✅ Mismo consumo de recursos para 640×480@10fps
+- ✅ Mucho menos propenso a bugs de preview congelado
+
+**Decisión Final**: Migrar a **CameraX** para cámara frontal.
+
+---
+
+### Decisión 5: ¿Cámara frontal siempre activa vs. solo en FatigueScreen + wearables?
+
+**Opción A: Cámara frontal siempre activa**
+- ❌ Alto consumo de batería
+- ❌ Problemas de privacidad y políticas de Play Store
+- ❌ Android restringe cámara en background
+
+**Opción B: Cámara frontal solo en FatigueScreen + wearables para background (elegida)**
+- ✅ Bajo consumo: cámara frontal solo cuando el usuario la ve
+- ✅ Wearable puede detectar fatiga en background sin cámara
+- ✅ Cumple mejor políticas de privacidad
+- ✅ Funciona en dispositivos que no soportan cámaras concurrentes
+
+**Decisión Final**: **Cámara frontal solo en FatigueScreen; wearables como fuente principal de fatiga en background.**
+
+---
+
+### Decisión 6: Arquitectura de estado — Servicio como fuente única de verdad
+
+**Problema encontrado**: La UI y el servicio nativo pueden desincronizarse.
 
 **Solución implementada**:
-- `CameraStatusListener` en el companion object del servicio: interface estática para comunicación
-- `resyncJsState()`: llamado desde `Module.init` cuando RN se (re)conecta al servicio. Re-emite estado actual + última telemetría conocida (`lastKnownGForce`, `lastKnownSpeed`)
-- `forceResetToStandby()`: red de seguridad. Aborta cualquier estado intermedio y vuelve a STANDBY. Idempotente.
-- `onRecordingFinalized()`: guard anti-race que verifica `serviceState` antes de iniciar nuevo segmento (evita "segmentos huérfanos")
-- `stop` ya NO mata el servicio (`stopSelf()`) — guarda el buffer y vuelve a STANDBY, preservando la sesión
+- `CameraStatusListener`: interface para comunicación UI↔Servicio
+- `resyncJsState()`: re-emite estado actual + última telemetría conocida al reconectar UI
+- `forceResetToStandby()`: red de seguridad para recuperar control
+- `onRecordingFinalized()`: guard anti-race que verifica estado antes de iniciar nuevo segmento
+- `stopAndSave` guarda el buffer y vuelve a STANDBY, NO mata el servicio
 
-**Definición**: El servicio nativo es la única fuente de verdad del estado. El JS es un espejo que se sincroniza en cada acción y en cada reconexión.
-
----
-
-### Decisión 8: UI estilo Google Maps (Monitor fullscreen)
-
-**Diseño implementado** (Junio 2026):
-- Cámara ocupa TODA la pantalla como fondo (`StyleSheet.absoluteFill`)
-- Header flotante con efecto glass-morphism (top)
-- Status pill estilo "Luego" de Maps (debajo del header)
-- Telemetría en círculos sin título: G-Force (arriba) y MPH (abajo) — bottom-left
-- Power (icono, sin texto) encima de Evento — bottom-right
-- REC badge cuando graba (parpadeante, top-right)
-- Bottom nav sin cambios (Monitor, Eventos, Configurar, Cuenta)
-
-**Componentes clave**: `MonitorScreen.tsx` (nuevo), `App.tsx` (delegado)
+**Definición**: El servicio nativo es la única fuente de verdad del estado. La UI es un espejo que se sincroniza en cada acción y reconexión.
 
 ---
 
-### Decisión 9: Recuperación de emergencia ante estado atascado
+### Decisión 7: Wearables — Health Connect como estándar principal
 
-**Problema**: Si el servicio queda en estado SAVING (e.g. post-evento de 15s que nunca finaliza), el JS mostraba "Guardando evento" y el usuario no podía hacer nada. Ni start ni stop funcionaban porque `isSaving=true` bloqueaba todos los handlers.
+**Opciones evaluadas**:
+- Health Connect: estandarizado, background, Android 14+
+- SDK de fabricante: fuerte acoplamiento a marca
+- Bluetooth LE directo: máximo control, máxima complejidad
 
-**Solución**:
-- `forceReset()` expuesto como `@ReactMethod` en el módulo nativo
-- Si el servicio está vivo → `forceResetToStandby()` → STANDBY → emite INACTIVO
-- Si el servicio está muerto → emite INACTIVO directamente para que la UI se recupere
-- `handleStart` y `handleStop` en `App.tsx` ahora detectan `isSaving=true` y llaman `forceReset()` en vez de retornar
-- **Garantía**: el usuario SIEMPRE puede recuperar el control, sin importar el estado del servicio
+**Decisión Final**: **Health Connect** para MVP. Permite soportar múltiples marcas sin acoplamiento. Fallback a SDK de fabricante si Health Connect no está disponible.
 
 ---
 
@@ -452,7 +392,7 @@ Android File System:
 ```
 Prioridad: ⭐⭐⭐ IMPLEMENTADO
 Cobertura: ~85% (el usuario VE el peligro primero)
-Implementación: Botón "Evento" en bottom-right de Monitor
+Implementación: Botón "Evento" en MonitorScreen
 Acción: saveEvent() guarda segmento pre + 15s post-evento
 Cooldown: 12 segundos entre eventos (anti-spam)
 ```
@@ -462,15 +402,15 @@ Cooldown: 12 segundos entre eventos (anti-spam)
 Prioridad: ⭐⭐⭐ IMPLEMENTADO
 Cobertura: Detecta impactos con fuerza calculada desde acelerómetro nativo
 Implementación: SensorManager nativo → accelListener → magnitud/gravedad
-Umbral: 2.5G (configurable entre 1.5–5.0G desde JS)
-Rate-limit: Emisión a JS cada 200ms
+Umbral: 2.5G (configurable entre 1.5–5.0G desde UI)
+Rate-limit: Emisión a UI cada 200ms
 Nota: Pruebas reales mostraron ~1.3G en frenadas bruscas; umbral 2.5G es conservador
 ```
 
 ### Trigger 3: Giroscopio (NO IMPLEMENTADO)
 ```
 Prioridad: ⭐ Postergado
-Razón: El acelerómetro con umbral configurable cubre los casos necesarios para MVP (~85%)
+Razón: El acelerómetro con umbral configurable cubre los casos necesarios para MVP
 Futuro: Evaluar si complementa o se omite definitivamente
 ```
 
@@ -480,6 +420,63 @@ Prioridad: ⭐ Postergado
 Razón: Acelerómetro + botón cubren ~85% de casos en pruebas MVP
 Futuro: Evaluar tras validación de MVP
 ```
+
+---
+
+## 😴 ANTI-SOMNOLENCIA Y WEARABLES
+
+### Estrategia de detección por niveles
+
+```
+Nivel 1 — Cámara frontal (ML Kit EAR):
+├── Solo disponible cuando FatigueScreen está visible
+├── Alta precisión de parpadeo
+├── Alerta inmediata: vibración + sonido
+└── Consumo medio-alto
+
+Nivel 2 — Wearable vía Health Connect:
+├── Funciona en background
+├── Lee FC, HRV, movimiento
+├── Detección basada en tendencias
+└── Bajo consumo
+
+Nivel 3 — Fallback:
+├── Si no hay wearable ni cámaras concurrentes
+├── Sugerir comprar wearable compatible
+└── Mostrar lista de dispositivos recomendados
+```
+
+### Validación de capacidad del dispositivo
+
+Al iniciar la app o entrar a FatigueScreen:
+
+1. Consultar `CameraManager.getConcurrentCameraIds()`
+2. Verificar si el par (trasera, frontal) puede abrirse simultáneamente
+3. Si SÍ: modo Vigilante puede seguir activo mientras se usa cámara frontal
+4. Si NO:
+   - Mostrar explicación al usuario
+   - Pausar modo Vigilante al entrar a FatigueScreen
+   - Sugerir usar un wearable para detección en background
+
+### Wearables recomendados (MVP vía Health Connect)
+
+> Nota: Health Connect requiere Android 14+ y que el wearable exponga datos a la app de Health Connect o Google Fit. La compatibilidad exacta varía por modelo y región.
+
+| # | Dispositivo | Tipo | Por qué recomendarlo | Buscar en Mercado Libre |
+|---|-------------|------|---------------------|-------------------------|
+| 1 | **Samsung Galaxy Watch7 / Watch6** | Smartwatch | Health Connect nativo, buena batería, HRV y FC | [Buscar Galaxy Watch](https://listado.mercadolibre.com.co/samsung-galaxy-watch) |
+| 2 | **Samsung Galaxy Watch FE** | Smartwatch | Accesible, mismo ecosistema salud | [Buscar Galaxy Watch FE](https://listado.mercadolibre.com.co/samsung-galaxy-watch-fe) |
+| 3 | **Xiaomi Smart Band 9 / 8** | Pulsera | Económica, buena batería, compatible con Google Fit | [Buscar Xiaomi Smart Band](https://listado.mercadolibre.com.co/xiaomi-smart-band) |
+| 4 | **Xiaomi Redmi Watch 5 / 4** | Reloj ligero | Barato, pantalla grande, FC continua | [Buscar Redmi Watch](https://listado.mercadolibre.com.co/xiaomi-redmi-watch) |
+| 5 | **Amazfit Bip 6 / Bip 5** | Reloj ligero | Excelente batería, sincroniza con Zepp Life → Google Fit | [Buscar Amazfit Bip](https://listado.mercadolibre.com.co/amazfit-bip) |
+| 6 | **Amazfit GTS 4 Mini / GTR Mini** | Smartwatch | Compacto, buena autonomía, datos de sueño/FC | [Buscar Amazfit GTS](https://listado.mercadolibre.com.co/amazfit-gts) |
+| 7 | **Huawei Band 9 / Band 8** | Pulsera | Económica, buena batería (requiere Huawei Health → Health Connect) | [Buscar Huawei Band](https://listado.mercadolibre.com.co/huawei-band) |
+| 8 | **Fitbit Charge 6 / Inspire 3** | Pulsera | Muy popular, buena app salud, FC/HRV | [Buscar Fitbit Charge](https://listado.mercadolibre.com.co/fitbit-charge) |
+| 9 | **Garmin Vivosmart 5 / Venu Sq 2** | Pulsera/Reloj | Muy usado por conductores, batería larga | [Buscar Garmin Vivosmart](https://listado.mercadolibre.com.co/garmin-vivosmart) |
+| 10 | **Google Pixel Watch 3 / 2** | Smartwatch | Health Connect nativo, integración total Android | [Buscar Pixel Watch](https://listado.mercadolibre.com.co/google-pixel-watch) |
+| 11 | **OnePlus Watch 2** | Smartwatch | Wear OS, Health Connect directo, buena batería | [Buscar OnePlus Watch](https://listado.mercadolibre.com.co/oneplus-watch) |
+
+> **Importante**: Los links son búsquedas en Mercado Libre Colombia. Antes de comprar, verificar que el modelo específico soporte sincronización con Google Fit o Health Connect en tu país.
 
 ---
 
@@ -511,42 +508,33 @@ Futuro: Evaluar tras validación de MVP
 | **Temperatura** | **+4-6°C** | Normal |
 | **Datos escritos** | **~2.8 GB** | Solo si hay incidentes |
 
+#### Anti-Somnolencia (cámara frontal solo en FatigueScreen)
+| Componente | Consumo | Notas |
+|------------|---------|-------|
+| Cámara frontal + ISP | 350 mW | 640×480 @ 10fps |
+| ML Kit Face Detection | 250 mW | GPU/NPU si está disponible |
+| Overhead | 100 mW | Threads + callbacks |
+| **TOTAL** | **~700 mW** | |
+| **Batería/hora** | **~4-5%** | Solo mientras FatigueScreen visible |
+| **Almacenamiento** | **0 bytes** | No guarda video |
+
+#### Anti-Somnolencia (wearable vía Health Connect)
+| Componente | Consumo | Notas |
+|------------|---------|-------|
+| Bluetooth LE | 30-50 mW | Conexión al wearable |
+| Health Connect queries | 20 mW | Polling periódico |
+| Overhead | 50 mW | Lógica de detección |
+| **TOTAL** | **~100-120 mW** | |
+| **Batería/hora** | **~1-2%** | Mucho menor que cámara frontal |
+
 ### Optimizaciones aplicadas
 
-#### 1. Reducir bitrate de 6 Mbps a 2 Mbps
-```
-Justificación: 2 Mbps es suficiente para leer placas (pruebas de calidad)
-Ahorro: 66% menos datos codificados
-Tradeoff: Ligeramente menos definición, pero aceptable para dash cam
-```
-
-#### 2. Desactivar audio
-```
-Justificación: Dash cams no necesitan audio para evidencia legal
-Ahorro: 30% menos CPU (no codificar AAC), 20% menos I/O
-Nota: Micrófono todavía se usa para detección de impactos
-```
-
-#### 3. Usar cache del OS (no Downloads directo)
-```
-Justificación: Cache está optimizado con write-back caching
-Beneficio: OS agrupa escrituras, reduced I/O físico ~70%
-Nota: Archivos se copian a Downloads solo cuando hay evento
-```
-
-#### 4. Frame Processor @ 10 FPS para anti-somnolencia (no 30 FPS)
-```
-Justificación: Parpadeo se detecta cada 100ms, 30 FPS es overkill
-Ahorro: 66% menos frames a procesar
-Tradeoff: Mínima latencia de detección
-```
-
-#### 5. Resolución 480p para cámara frontal (no 1080p)
-```
-Justificación: Solo necesitas puntos faciales, no detalles
-Ahorro: 75% menos datos a procesar
-Cálculo: EAR funciona igual con baja resolución
-```
+1. **Bitrate 2 Mbps** para cámara trasera: 66% menos datos que 6 Mbps.
+2. **Audio desactivado** en grabación: ahorro de CPU y I/O.
+3. **Cache del OS** para buffer circular: reduce escrituras físicas.
+4. **Cámara frontal 640×480 @ 10fps**: suficiente para parpadeo, mínimo consumo.
+5. **Cámara frontal solo en FatigueScreen**: no consume batería en background.
+6. **Wearable como fuente background**: evita mantener cámara frontal siempre activa.
 
 ---
 
@@ -555,49 +543,17 @@ Cálculo: EAR funciona igual con baja resolución
 ### Segmento 1: Conductores de Uber/Taxi/Reparto (PRIMARY - MVP)
 **Tamaño**: 2-3 millones en Latinoamérica  
 **Pain Point**: "Necesito evidencia para disputas con pasajeros/seguros"  
-**Willingness to Pay**: 💰💰💰 Alta ($5-10/mes)  
-**Características**:
-- Conducen 6-12 horas diarias
-- Usar su teléfono (ya tienen soporte en carro)
-- Experimentan accidentes regularmente
-- Entienden valor de evidencia
-
-**Tácticas Go-to-Market**:
-- Infiltrar grupos de Facebook de conductores
-- Videos de testimonios (antes/después de incidente)
-- Alianza con talleres mecánicos/tiendas accesorios
-
----
+**Willingness to Pay**: 💰💰💰 Alta ($5-10/mes)
 
 ### Segmento 2: Padres con hijos conductores jóvenes (SECONDARY)
 **Tamaño**: 1-2 millones en Latinoamérica  
 **Pain Point**: "Mi hijo se duerme manejando, quiero saber"  
-**Willingness to Pay**: 💰💰 Media ($3-5/mes)  
-**Características**:
-- Pagan por seguridad del hijo
-- Interesados en feature de anti-somnolencia
-- Posible que paguen plan familiar
-
-**Tácticas Go-to-Market**:
-- Contenido educativo sobre seguridad vial
-- Testimonios de padres que evitaron tragedias
-- Integración con apps de control parental
-
----
+**Willingness to Pay**: 💰💰 Media ($3-5/mes)
 
 ### Segmento 3: Empresas de flota/reparto (FUTURE - AÑOS 2+)
 **Tamaño**: 50,000+ empresas  
-**Pain Point**: "Necesito monitorear 50+ conductores, reducir accidentes, reclamaciones"  
-**Willingness to Pay**: 💰💰💰💰 Muy alta ($20-50/mes × conductor)  
-**Características**:
-- Pain point es económico (accidentes = dinero)
-- Necesitan dashboard centralizado
-- Requieren reportes + alertas en tiempo real
-
-**Tácticas Go-to-Market** (Future):
-- Alianza con aseguradoras (ofrecen descuento a clientes)
-- API para integración con sistemas de flota
-- Datos agregados de seguridad
+**Pain Point**: "Necesito monitorear 50+ conductores"  
+**Willingness to Pay**: 💰💰💰💰 Muy alta
 
 ---
 
@@ -606,14 +562,16 @@ Cálculo: EAR funciona igual con baja resolución
 | Riesgo | Probabilidad | Impacto | Mitigación |
 |--------|--------------|--------|-----------|
 | **Daño OIS por vibración** | Media | Alto (legal) | Disclaimer claro en onboarding |
-| **Sobrecalentamiento** | Baja | Alto (device damage) | Tutorial de desactivar optimización de batería |
-| **App muere en background** | Alta | Alto (no funciona) | Foreground Service + Watchdog + testing |
-| **Detección de audio falsos positivos** | Alta | Medio (molestia) | Umbrales ajustables, confirmación cruzada |
-| **Privacidad (cámara frontal siempre activa)** | Baja (legal) | Medio (user trust) | Disclaimer: "Solo local, nunca se envía a cloud" |
-| **iOS no soportado** | Cierto | Medio (market) | Comunicar claramente "Android only" |
+| **Sobrecalentamiento** | Baja | Alto | Tutorial de optimización de batería, reducir bitrate |
+| **App muere en background** | Alta | Alto | Foreground Service + WorkManager Watchdog |
+| **Preview frontal congelado** | Media | Alto | Migrar a CameraX, manejo robusto de Surface |
+| **Dispositivo no soporta cámaras concurrentes** | Media | Medio | Detectar en runtime, pausar Vigilante, sugerir wearable |
+| **Wearable no sincroniza con Health Connect** | Media | Medio | Mantener lista actualizada de dispositivos compatibles |
+| **Privacidad (cámara frontal)** | Baja | Medio | Solo activa en FatigueScreen, disclaimer "solo local" |
+| **iOS no soportado** | Cierto | Medio | Comunicar claramente "Android only" |
 | **Compatibilidad en celus viejos** | Media | Medio | Detectar hardware en init, ofrecer modo reducido |
-| **Falsas reclamaciones legales** | Baja | Muy alto (legal) | Disclaimer: "No usamos para prueba legal válida" |
-| **Competencia (dash cams tradicionales)** | Alta | Medio | Diferenciador: bajo consumo + anti-somnolencia |
+| **Falsas reclamaciones legales** | Baja | Muy alto | Disclaimer: "No usamos para prueba legal válida" |
+| **Competencia (dash cams tradicionales)** | Alta | Medio | Diferenciador: bajo consumo + anti-somnolencia + wearables |
 
 ---
 
@@ -626,188 +584,109 @@ CONFIGURACIÓN:
 ├── Resolución: 1920 × 1080 (Full HD)
 ├── FPS: 30 fps
 ├── Codec: H.264
-├── Bitrate: 2 Mbps (optimizado, NO 6 Mbps default)
+├── Bitrate: 2 Mbps
 ├── Audio: DESACTIVADO
 ├── Buffer: Circular, últimos 30 segundos
-├── Almacenamiento: context.cacheDir (Android)
+├── Almacenamiento: context.cacheDir
 ├── Limpieza: Automática (máximo 2 segmentos en cache)
-└── Trigger guardar: Botón + Audio + Giroscopio
+└── Trigger guardar: Botón + Acelerómetro
 
 SEGMENTACIÓN:
-├── Segmento 1: 15 segundos (descartable, en RAM/cache)
-├── Segmento 2: 15 segundos (descartable, en RAM/cache)
+├── Segmento 0: 15 segundos
+├── Segmento 1: 15 segundos
 └── Al detectar evento:
-    ├── Ambos segmentos se copian a Downloads
+    ├── Segmentos se copian a Downloads/DuoVial
     ├── Nombrados: incident_[timestamp]_part0.mp4 y part1.mp4
-    └── Usuario puede ver/exportar/eliminar
+    └── Post-evento: 15 segundos adicionales
 
 CONSUMO ESTIMADO:
-├── CPU: 8-10% (encoder H.264)
-├── Almacenamiento write: ~2 MB/seg (bitrate reducido)
+├── CPU: 8-10%
+├── Almacenamiento write: ~2 MB/seg
 ├── Batería: ~6% por hora
-└── Temperatura: +4-6°C sobre ambiente
+└── Temperatura: +4-6°C
 ```
 
 ### 2.2 Cámara Frontal (Anti-Somnolencia)
 
 ```
-CONFIGURACIÓN:
-├── Resolución: 640 × 480 (VGA optimizado)
-├── FPS: 10 fps (suficiente para parpadeo)
-├── API: Android Camera2 (ImageReader) — separado de CameraX
-├── Frame Processor: ML Kit Face Detection (`com.google.mlkit:face-detection:16.1.6`)
-├── Almacenamiento: NINGUNO (frames se descartan)
+CONFIGURACIÓN (post-refactorización Fase 3B):
+├── API: CameraX (Preview + ImageAnalysis)
+├── Resolución: 640 × 480 (VGA)
+├── FPS: 10 fps
+├── Frame Processor: ML Kit Face Detection
+├── Almacenamiento: NINGUNO
 ├── Cálculo: Eye Aspect Ratio (EAR) en tiempo real
-└── Trigger alerta: EAR < 0.2 × > 2 segundos
+├── Trigger alerta: EAR < umbral × duración configurable
+└── Alcance: Solo cuando FatigueScreen está visible
 
 SELECCIÓN DEL CONDUCTOR:
-├── ML Kit retorna bounding boxes con x, y, width, height
-├── Cámara frontal espeja la imagen (como espejo)
-├── En frame RAW: conductor está a la DERECHA (alto x)
-├── En preview ESPEJADO: conductor aparece a la IZQUIERDA
-├── Selección: faces.maxByOrNull { it.boundingBox.centerX() }
+├── ML Kit retorna bounding boxes para cada rostro
+├── Cámara frontal espeja la imagen
+├── Selección: rostro con mayor centerX (conductor a la izquierda en preview)
 └── Edge cases: 1 persona → usar esa; 0 personas → no alertar
 
-EAR CÁLCULO:
-├── Ojos: FaceContour.LEFT_EYE y FaceContour.RIGHT_EYE
-├── Puntos: 6 puntos por ojo (p1-p6)
-├── Vertical1 = distance(p2, p6)
-├── Vertical2 = distance(p3, p5)
-├── Horizontal = distance(p1, p4)
-└── EAR = (vertical1 + vertical2) / (2.0 × horizontal) — promedio ambos ojos
-
 UMBRALES CONFIGURABLES:
-├── Closed eye threshold: EAR < 0.2 (ajustable 0.1-0.4)
-├── Duration: > 2 segundos (ajustable 1-5 seg)
-├── Snooze: 5 minutos (usuario puede ignorar alerta)
-└── Allowed per hour: 3 alertas (ajustable 1-5)
+├── Closed eye threshold: 0.1–0.4 (default 0.2)
+├── Duration: 1–5 segundos (default 2s)
+├── Snooze: configurable (default 5 min)
+└── Allowed per hour: 1–5 alertas (default 3)
 
 ACCIÓN AL DETECTAR:
-├── Vibración: Patrón [0, 500, 200, 500] ms (nativa Kotlin)
-├── Sonido: Alarma de 2 segundos (nativa Kotlin)
-├── Visual: Overlay rojo intermitente en FatigueScreen
-├── Evento JS: onDrowsinessDetected (para UI feedback)
-└── LOG: Registro del evento para análisis
+├── Vibración: Patrón [0, 500, 200, 500] ms
+├── Sonido: Alarma de 2 segundos
+├── Visual: Overlay rojo en FatigueScreen
+└── Evento UI: actualización de FaceStatus
 
 CONSUMO ESTIMADO:
-├── CPU: 4-6% (ML Kit en GPU/NPU)
-├── Almacenamiento: 0 bytes (nada se guarda)
-├── Batería: ~4% por hora
-└── Temperatura: +2-3°C sobre ambiente
-
-ARCHIVOS:
-├── FrontFaceDetector.kt (nuevo) — cámara frontal + ML Kit + EAR + alertas
-├── BackgroundCameraService.kt — integrar FrontFaceDetector
-├── BackgroundCameraModule.kt — métodos bridge nativo→JS
-├── BackgroundGuard.ts — métodos JS
-├── FatigueScreen.tsx (nuevo) — pantalla dedicada con preview + configuración
-├── MonitorScreen.tsx — botón "Frontal" navega a FatigueScreen
-└── App.tsx — estado fatiga + navegación + listeners
+├── CPU: 4-6% (ML Kit)
+├── Almacenamiento: 0 bytes
+├── Batería: ~4-5% por hora (solo con pantalla visible)
+└── Temperatura: +2-3°C
 ```
 
-### 2.3 Detección Multi-Sensor
+### 2.3 Wearables (Health Connect)
 
-#### Botón de Pánico
 ```
-UBICACIÓN: Centro pantalla, tamaño grande
-ACCIÓN: saveBufferOnImpact()
-CONFIRMACIÓN: Toast "Incidente guardado"
-COOLDOWN: 3 segundos (anti-spam)
-FEEDBACK: Vibración + sonido distintivo
-```
+CONFIGURACIÓN:
+├── API: Health Connect (Android 14+)
+├── Datos leídos:
+│   ├── HeartRate (frecuencia cardíaca)
+│   ├── HeartRateVariability (HRV si disponible)
+│   ├── SleepSession (calidad de sueño previo)
+│   └── Steps / ActiveCalories (actividad reciente)
+├── Frecuencia de lectura: Cada 1-5 minutos
+├── Almacenamiento: Solo en memoria, no se guarda
+└── Privacidad: Datos solo local, no se envían a servidores
 
-#### Detección de Audio
-```
-FRECUENCIAS MONITOREADAS:
-├── Rango bajo (impacto metal): 0-500 Hz
-├── Rango alto (vidrio rompiéndose): 2,000-8,000 Hz
-└── Filtrado: Excluye 300-3,000 Hz (voz humana)
-
-UMBRAL: Pico de decibelios > -20 dB
-CONFIRMACIÓN: Requiere pico > -20 dB + otros sensores (no solo audio)
-FALSO POSITIVO RATE: <5% (target)
-FALSO NEGATIVO RATE: <10% (target)
-```
-
-#### Giroscopio
-```
-UMBRAL: Rotación magnitude > 3.0 rad/seg
-DURACIÓN: Evento instantáneo (no requiere sostenimiento)
-CASOS DETECTA:
-├── Derrape (cambio de ángulo brusco)
-├── Pérdida de control
-├── Vuelco del vehículo
-└── Impacto lateral que rota el carro
-CALIBRACIÓN: Ajustable en Settings (2.5 - 4.0 rad/seg)
+LÓGICA DE DETECCIÓN (futura):
+├── Anomalías en FC sostenida (bradicardia/extrema)
+├── Caída de HRV
+├── Falta de movimiento prolongado
+└── Fusión opcional con datos de cámara frontal cuando está activa
 ```
 
 ### 2.4 Persistencia en Background
 
 ```
 FOREGROUND SERVICE:
-├── Channel ID: 'duovial_camera_service_channel'
-├── Notification ID: 144
-├── Título: "DuoVial"
-├── Mensaje: Dinámico ("Cámara lista." / "Grabación circular activa.")
-├── Importancia: LOW (no molesta)
-├── Service Type (Q+): CAMERA + LOCATION
-└── No dismissable: true
-
-WATCHDOG (WorkManager):
-├── Task Key: 'duovial_watchdog'
-├── Intervalo: Cada 15 minutos
-├── Flex Time: 5 minutos
-├── Acción: Re-llama startRecording() si el servicio murió
-└── Persistencia: Supera reseteos del OS
-
-ESTADOS DEL SERVICIO:
-├── STANDBY → Preview viva, GPS activo, sin grabar
-├── RECORDING → Buffer circular rotando, acelerómetro activo
-└── SAVING → Guardando evento (transitorio, vuelve a STANDBY o RECORDING)
+├── Tipo: camera | location | microphone
+├── Notificación persistente
+├── START_STICKY
+└── WorkManager Watchdog cada 15 minutos
 
 PERMISOS REQUERIDOS:
-├── android.permission.CAMERA
-├── android.permission.ACCESS_FINE_LOCATION
-├── android.permission.ACCESS_COARSE_LOCATION
-├── android.permission.FOREGROUND_SERVICE
-├── android.permission.FOREGROUND_SERVICE_CAMERA
-├── android.permission.FOREGROUND_SERVICE_LOCATION
-├── android.permission.POST_NOTIFICATIONS
-├── android.permission.SYSTEM_ALERT_WINDOW (burbuja flotante)
-├── android.permission.RECORD_AUDIO (detección de impactos por audio)
-├── android.permission.VIBRATE (alertas de fatiga)
-└── android.permission.WAKE_LOCK
-
-BATTERY OPTIMIZATION HANDLING:
-├── Detectar si optimización está ON
-├── Mostrar tutorial en onboarding
-├── Link directo a Settings (Intent)
-└── Re-prompt cada 30 días
+├── CAMERA
+├── ACCESS_FINE_LOCATION / COARSE
+├── FOREGROUND_SERVICE + CAMERA + LOCATION + MICROPHONE
+├── POST_NOTIFICATIONS
+├── SYSTEM_ALERT_WINDOW (burbuja flotante)
+├── RECORD_AUDIO
+├── VIBRATE
+├── WAKE_LOCK
+└── HEALTH_CONNECT (nuevo, para wearables)
 ```
 
-```
-ESTRUCTURA:
-├── CACHE (context.cacheDir):
-│   ├── segment_0.mp4 (15 seg, buffer rotativo)
-│   └── segment_1.mp4 (15 seg, buffer rotativo)
-│
-└── DOWNLOADS (MediaStore → Download/DuoVial):
-    └── incident_[timestamp]_part0.mp4 (permanente, usuario ve)
-
-LIMPIEZA AUTOMÁTICA:
-├── Cache: Máximo 2 archivos (30 seg totales)
-├── Si hay >2 segmentos en cache → delete oldest
-├── Downloads: Manual (usuario decide)
-└── Opción para auto-delete después de 30 días (setting)
-
-ESPACIO REQUERIDO:
-├── Por incidente (30 seg): ~7.5 MB (bitrate 2 Mbps)
-├── Si 5 incidentes/mes: ~37.5 MB/mes
-├── Premium (ilimitado): Target <2 GB/mes
-└── Recomendación: Mínimo 5 GB storage libres
-```
-
-### 2.6 Arquitectura de Estado y Recuperación
+### 2.5 Arquitectura de Estado y Recuperación
 
 ```
 MÁQUINA DE ESTADOS (ServiceState):
@@ -816,84 +695,58 @@ MÁQUINA DE ESTADOS (ServiceState):
 │          │              │ → Preview + GPS vivos; no graba       │
 ├──────────┼──────────────┼──────────────────────────────────────┤
 │ RECORDING│ → STANDBY    │ forceResetToStandby() / stopAndSave  │
-│          │ → SAVING     │ saveEvent() (colisión o pánico)      │
-│          │              │ → Buffer circular rotando 2 segs     │
+│          │ → SAVING     │ saveEvent()                          │
+│          │              │ → Buffer circular rotando            │
 ├──────────┼──────────────┼──────────────────────────────────────┤
-│  SAVING  │ → STANDBY    │ forceResetToStandby() (si atascado)  │
-│          │ → RECORDING  │ handleEventSaveTransition (normal)   │
-│          │              │ → Post-evento 15s o guardado buffer  │
+│  SAVING  │ → STANDBY    │ forceResetToStandby()                │
+│          │ → RECORDING  │ handleEventSaveTransition            │
 └──────────┴──────────────┴──────────────────────────────────────┘
 
-COMUNICACIÓN JS → SERVICIO:
-┌─────────────────────────────────────────────────────────────────┐
-│  BackgroundGuard.ts                                              │
-│    ├── startStandby()    → Module.startStandby()                 │
-│    ├── startGuarding()   → Module.startRecording() + Watchdog    │
-│    ├── stopGuarding()    → Module.stopRecording()                │
-│    ├── triggerPanic()    → Module.triggerPanic()                 │
-│    ├── forceReset()      → Module.forceReset()  ★ nuevo          │
-│    ├── setGForceThreshold(t) → Module.setGForceThreshold(t)       │
-│    ├── getGForceThreshold()  → Module.getGForceThreshold()        │
-│    ├── enableFatigueDetection(e) → Module.enableFatigueDetection(e) │
-│    ├── setEarThreshold(t) → Module.setEarThreshold(t)            │
-│    ├── snoozeFatigueAlert(m) → Module.snoozeFatigueAlert(m)      │
-│    └── getFatigueStatus()  → Module.getFatigueStatus()           │
-└─────────────────────────────────────────────────────────────────┘
+COMUNICACIÓN UI → SERVICIO:
+├── startStandby()
+├── startRecording()
+├── stopRecording()
+├── triggerPanic()
+├── forceReset()
+├── setGForceThreshold()
+├── enableFatigueDetection()
+├── setEarThreshold()
+├── setDurationThreshold()
+├── setMaxAlertsPerHour()
+└── snoozeFatigueAlert()
 
-COMUNICACIÓN SERVICIO → JS:
-┌─────────────────────────────────────────────────────────────────┐
-│  DeviceEventEmitter (vía CameraStatusListener)                    │
-│    ├── onCameraStatusChanged  → { status: string }               │
-│    ├── onAccelChanged         → { gForce: double }               │
-│    ├── onSpeedChanged         → { speed: double }                │
-│    ├── onFaceStatusChanged    → { enabled, faceDetected, earValue, closedEyeDuration } │
-│    └── onDrowsinessDetected   → { timestamp, earValue }          │
-│                                                                   │
-│  Mecanismos anti-desync:                                          │
-│    ├── resyncJsState()  → llamado en Module.init tras reconexión  │
-│    ├── lastKnownGForce  → último valor de acelerómetro conocido   │
-│    ├── lastKnownSpeed   → último valor de velocidad conocido      │
-│    └── forceReset()     → siempre devuelve INACTIVO si Service    │
-│                           está muerto (no deja UI colgada)        │
-└─────────────────────────────────────────────────────────────────┘
-
-FLUJO DE RECUPERACIÓN DE EMERGENCIA:
-1. JS detecta isSaving=true → botón de power llama forceReset()
-2. Module.forceReset():
-   ├── Service vivo → service.forceResetToStandby() → STANDBY → INACTIVO
-   └── Service muerto → sendStatusEventToJS("INACTIVO")
-3. JS recibe INACTIVO → isRecording=false, isSaving=false
-4. Botón de power vuelve al estado normal (START)
+COMUNICACIÓN SERVICIO → UI:
+├── onCameraStatusChanged
+├── onAccelChanged
+├── onSpeedChanged
+├── onFaceStatusChanged
+└── onDrowsinessDetected
 ```
 
-### 2.7 Componentes de la UI Actual
+### 2.6 Componentes de la UI Actual
 
 ```
-App.tsx (contenedor principal):
-├── AuthProvider (AWS Cognito)
-├── SafeAreaView + StatusBar
-├── Container con tab dinámico:
-│   ├── Monitor → MonitorScreen (fullscreen cámara)
-│   ├── Fatigue → FatigueScreen (detección de somnolencia)
-│   ├── Eventos → renderEventos (galería)
-│   ├── Configuraciones → renderConfig (sliders, overlay, G-Force)
-│   └── Cuenta → renderCuenta (login/logout)
-└── BottomNav (Monitor, Eventos, Configurar, Cuenta) — oculto en FatigueScreen
+DuoVialApp.kt (contenedor principal):
+├── Scaffold con bottom nav
+├── Tabs: Monitor, Eventos, Configurar, Cuenta
+└── FatigueScreen (pantalla superpuesta, sin bottom nav)
 
-MonitorScreen.tsx (estilo Google Maps):
-├── BackgroundCameraPreview (absoluteFill — fondo)
-├── REC badge (top-right, parpadeante cuando graba)
-├── FloatingHeader (glass-morphism, top):
-│   ├── Logo + "DuoVial" + "STANDBY ACTIVE"
-│   └── Botón "Frontal" (navega a FatigueScreen — activo)
-├── StatusPill (debajo del header, estilo "Luego" de Maps)
-├── TelemetryStack (bottom-left):
-│   ├── Círculo G-Force (valor + unidad "G")
-│   └── Círculo MPH (valor + unidad "MPH")
-└── BottomActions (bottom-right):
-    ├── PowerIconButton (verde=start, rojo=stop, gris=disabled)
-    └── EventoButton (amarillo=panic, gris=inactive)
+MonitorScreen.kt:
+├── CameraPreview (fondo fullscreen)
+├── Header con logo, estado, botón a FatigueScreen
+├── Telemetría: G-Force, MPH/KPH
+└── Botones: Start/Stop, Evento
+
+FatigueScreen.kt:
+├── FrontCameraPreview (fondo)
+├── Status pill (Buscando rostro / Alerta / Alerta)
+├── Barra de EAR
+├── Botón Activar/Detener
+├── Botón Ajustes
+└── Panel de configuración (sliders)
 ```
+
+---
 
 ## 📊 MÉTRICAS DE ÉXITO
 
@@ -901,56 +754,48 @@ MonitorScreen.tsx (estilo Google Maps):
 
 | Métrica | Target | Justificación |
 |---------|--------|---------------|
-| Instalaciones | 500+ | Suficiente para validar product-market fit |
+| Instalaciones | 500+ | Validar product-market fit |
 | MAU | 200+ | 40% de instalaciones activas |
 | Conversion a pago | 5%+ | 1 de cada 20 usuarios paga |
-| MRR (Monthly Recurring) | $500+ | 10 usuarios × $4.99 × 10 meses promedio |
-| Churn | <10% | Aceptable para consumidor (promedio 20%) |
-| Rating | 4.0+ | Competitivo con dash cams tradicionales |
-| Time to Guard | <5 min | Tiempo desde instalar hasta grabando |
-| Battery impact | <12%/hour | Core metric (vs. 15-18% sin optimizar) |
-
-### Post-MVP (Meses 3-6)
-
-| Métrica | Target | Justificación |
-|---------|--------|---------------|
-| Instalaciones | 5,000+ | 10x growth con marketing |
-| MRR | $5,000+ | 10x growth |
-| Churn | <8% | Mejora con updates |
-| NPS | 40+ | Predictivo de growth viral |
-| B2B pilots | 2+ | Aseguradoras o empresas de flota |
-| Referrals | 30% de installs | Conductores se conocen entre sí |
+| MRR | $500+ | Base inicial recurrente |
+| Churn | <10% | Aceptable para consumidor |
+| Rating | 4.0+ | Competitivo |
+| Time to Guard | <5 min | Tiempo hasta grabando |
+| Battery impact (Vigilante) | <12%/hour | Core metric |
+| Preview frontal estable | 0 congelamientos | Critico para anti-somnolencia |
+| Usuarios con wearable | 10%+ | Valida integración Health Connect |
 
 ---
 
 ### Lo que necesita más investigación
 ⚠️ Falsos positivos de acelerómetro en baches/toppes  
-⚠️ Optimización de batería en Xiaomi/Samsung/Huawei (cada marca es diferente)  
-⚠️ Compatibilidad con frame rates variables en cámaras diferentes
-⚠️ Estabilidad del servicio en sesiones largas (>2h) en dispositivos con RAM limitada
+⚠️ Compatibilidad de Health Connect por marca de wearable  
+⚠️ Dispositivos que no soportan cámaras concurrentes  
+⚠️ Estabilidad del servicio en sesiones largas (>2h)  
+⚠️ Calibración de umbrales de fatiga por wearable
 
 ### Decisiones tomadas para MVP
-1. **Simpler is better**: Cache del OS (no RAM puro) para lanzar rápido
-2. **Multi-sensor es crítico**: Un solo trigger falló en pruebas reales (botón + acelerómetro implementados)
-3. **Freemium funciona**: 5 incidentes/mes impulsa conversión
-4. **Conductor es user, no empresa**: Segmentación clara en Go-to-Market
-5. **Kotlin nativo directo**: Se abandonó react-native-vision-camera/sensors por acceso nativo en Kotlin para máximo control del ciclo de vida
-6. **Servicio es fuente única de verdad**: El estado del servicio nativo es autoritativo. JS se sincroniza vía `resyncJsState()` en cada reconexión
-7. **Stop preserva la sesión**: `stopAndSave` guarda el buffer, vuelve a STANDBY, NO mata el servicio
-8. **forceReset como paracaídas**: El usuario siempre puede recuperar el control sin importar el estado del servicio
+1. **Kotlin Multiplatform + Compose**: un solo lenguaje, máximo control nativo.
+2. **Buffer circular con cache del OS**: balance entre rendimiento y complejidad.
+3. **Cámara frontal solo en FatigueScreen**: ahorro de batería y privacidad.
+4. **CameraX para cámara frontal**: robustez ante bugs de Surface.
+5. **Health Connect para wearables**: estándar abierto, sin acoplamiento a marca.
+6. **Servicio como fuente única de verdad**: evita desincronización UI/servicio.
+7. **Sugerencia de wearables compatibles**: mejora UX cuando el hardware es limitado.
 
 ### Próximas validaciones
-- [ ] Testing en mínimo 5 modelos de dispositivos
-- [ ] Calibración de umbrales de audio en mundo real
-- [ ] A/B testing de UX (dónde poner botón pánico)
+- [ ] Testing preview frontal en 5+ dispositivos
+- [ ] Testing de Health Connect con al menos 3 wearables
+- [ ] Calibración de umbrales de fatiga
+- [ ] Testing de cámaras concurrentes en gama baja/media/alta
 - [ ] NPS de primeros 50 usuarios
 - [ ] Análisis de false positive rate por semana
 
 ---
 
-**Documento versión**: 1.3  
-**Última actualización**: Junio 10, 2026  
-**Siguiente review**: Después de Fase 4 (UI + Monetización)
+**Documento versión**: 1.4  
+**Última actualización**: Junio 15, 2026  
+**Siguiente review**: Después de Fase 3B (Anti-somnolencia refactorizada)
 
 **Contactar**: [Oscar's info aquí]  
 **Repositorio**: [GitHub link aquí]

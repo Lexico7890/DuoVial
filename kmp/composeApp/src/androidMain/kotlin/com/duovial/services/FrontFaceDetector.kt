@@ -33,6 +33,13 @@ class FrontFaceDetector(private val context: Context) {
         private const val CAMERA_WIDTH = 640
         private const val CAMERA_HEIGHT = 480
         private const val TARGET_FPS = 10
+
+        @Volatile var pendingPreviewSurface: android.view.Surface? = null
+            private set
+
+        fun setPreviewSurface(surface: android.view.Surface?) {
+            pendingPreviewSurface = surface
+        }
     }
 
     var earThreshold: Double = 0.2
@@ -171,8 +178,10 @@ class FrontFaceDetector(private val context: Context) {
     private fun createCaptureSession() {
         val camera = cameraDevice ?: return
         val surface = imageReader?.surface ?: return
+        val surfaces = mutableListOf(surface)
+        pendingPreviewSurface?.let { surfaces.add(it) }
         try {
-            camera.createCaptureSession(listOf(surface), object : CameraCaptureSession.StateCallback() {
+            camera.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
                     Log.d(TAG, "Sesion de captura frontal configurada.")
                     captureSession = session
@@ -193,6 +202,7 @@ class FrontFaceDetector(private val context: Context) {
         try {
             val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(surface)
+                pendingPreviewSurface?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             }
