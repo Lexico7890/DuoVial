@@ -99,6 +99,11 @@ class BackgroundCameraService : LifecycleService() {
         override val lifecycle: Lifecycle get() = registry
     }
 
+    private val facialLifecycleOwner = object : LifecycleOwner {
+        val registry = LifecycleRegistry(this)
+        override val lifecycle: Lifecycle get() = registry
+    }
+
     private var sensorManager: SensorManager? = null
     private var accelSensor: Sensor? = null
     private var lastAccelUpdateTime = 0L
@@ -113,8 +118,22 @@ class BackgroundCameraService : LifecycleService() {
     private var windowManager: WindowManager? = null
     private var floatingBubbleView: View? = null
 
-    internal var frontDetector: FrontFaceDetector? = null
-        private set
+    private var fatigueCameraManager: FatigueCameraManager? = null
+    private var faceProcessor: FaceProcessor? = null
+
+    private var earThreshold: Double = 0.2
+    private var closedEyeDurationMs: Long = 2000L
+    private var maxAlertsPerHour: Int = 3
+    private var snoozeMinutes: Int = 5
+    private var isSnoozed: Boolean = false
+    private var snoozeEndTime: Long = 0L
+    private var closedEyeStartTime: Long = 0L
+    private var currentClosedEyeDurationMs: Long = 0L
+    private var lastAlertTime: Long = 0L
+    private var alertCountThisHour: Int = 0
+    private var hourResetTime: Long = 0L
+    @Volatile private var currentEar: Double = 0.0
+    @Volatile private var currentFaceDetected: Boolean = false
 
     companion object {
         var instance: BackgroundCameraService? = null
@@ -128,6 +147,8 @@ class BackgroundCameraService : LifecycleService() {
         @Volatile var pendingGForceThreshold: Double? = null
         @Volatile var pendingEarThreshold: Double? = null
         @Volatile var pendingFatigueEnabled: Boolean? = null
+        @Volatile var activeFrontPreviewView: PreviewView? = null
+        @Volatile var pendingFrontPreviewView: PreviewView? = null
 
         internal fun markServiceStarting() { serviceStarting = true }
         internal fun clearServiceStarting() { serviceStarting = false }
@@ -140,6 +161,8 @@ class BackgroundCameraService : LifecycleService() {
         const val ACTION_ENABLE_FATIGUE = "ACTION_ENABLE_FATIGUE"
         const val ACTION_DISABLE_FATIGUE = "ACTION_DISABLE_FATIGUE"
         const val ACTION_SET_EAR_THRESHOLD = "ACTION_SET_EAR_THRESHOLD"
+        const val ACTION_SET_DURATION_THRESHOLD = "ACTION_SET_DURATION_THRESHOLD"
+        const val ACTION_SET_MAX_ALERTS = "ACTION_SET_MAX_ALERTS"
         const val ACTION_SNOOZE_FATIGUE = "ACTION_SNOOZE_FATIGUE"
     }
 
@@ -198,24 +221,25 @@ class BackgroundCameraService : LifecycleService() {
             Log.i(TAG, "Aplicado umbral G-Force pendiente: $it G")
         }
 
-        frontDetector = FrontFaceDetector(this).apply {
-            pendingEarThreshold?.let {
-                earThreshold = it
-                pendingEarThreshold = null
-            }
-            eventListener = object : FrontFaceDetector.FatigueEventListener {
-                override fun onFaceStatusChanged(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {
-                    sendFatigueStatusEvent(enabled, faceDetected, earValue, closedEyeDuration)
-                }
-                override fun onDrowsinessDetected(timestamp: Long, earValue: Double) {
-                    sendDrowsinessDetectedEvent(timestamp, earValue)
-                }
-            }
+        pendingEarThreshold?.let {
+            earThreshold = it
+            pendingEarThreshold = null
+            Log.i(TAG, "Aplicado umbral EAR pendiente: $it")
         }
+
+        fatigueCameraManager = FatigueCameraManager(this)
+        faceProcessor = FaceProcessor(this).apply {
+            setCallback(object : FaceProcessor.Callback {
+                override fun onFaceProcessed(faceDetected: Boolean, earValue: Double) {
+                    handleFaceProcessingResult(faceDetected, earValue)
+                }
+            })
+        }
+
         if (pendingFatigueEnabled == true) {
-            frontDetector?.start()
+            startFrontCameraSession()
             pendingFatigueEnabled = null
-            Log.i(TAG, "FrontFaceDetector auto-activado desde pending.")
+            Log.i(TAG, "Deteccion de fatiga auto-activada desde pending.")
         }
 
         startServiceNotification()
@@ -246,6 +270,16 @@ class BackgroundCameraService : LifecycleService() {
                     val threshold = intent.getDoubleExtra("ear_threshold", 0.2)
                     setEarThreshold(threshold)
                 }
+                ACTION_SET_DURATION_THRESHOLD -> {
+                    val ms = intent.getLongExtra("duration_ms", 2000L)
+                    closedEyeDurationMs = ms
+                    Log.i(TAG, "Duracion ojos cerrados actualizada a ${ms}ms")
+                }
+                ACTION_SET_MAX_ALERTS -> {
+                    val max = intent.getIntExtra("max_alerts", 3)
+                    maxAlertsPerHour = max
+                    Log.i(TAG, "Max alertas/hora actualizado a $max")
+                }
                 ACTION_SNOOZE_FATIGUE -> {
                     val minutes = intent.getIntExtra("minutes", 5)
                     snoozeFatigueAlert(minutes)
@@ -262,8 +296,7 @@ class BackgroundCameraService : LifecycleService() {
         instance = null
         stopCircularBufferTimers()
         stopSensors()
-        frontDetector?.stop()
-        frontDetector = null
+        stopFatigueDetection()
         stopLocationUpdates()
         removeFloatingBubble()
         currentActiveRecording?.stop()
@@ -272,6 +305,7 @@ class BackgroundCameraService : LifecycleService() {
         activePreview = null
         cameraProvider?.unbindAll()
         cameraLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
+        facialLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
         statusListener?.onStatusChanged("INACTIVO")
         super.onDestroy()
     }
@@ -385,6 +419,26 @@ class BackgroundCameraService : LifecycleService() {
         activePreviewView = null
         activePreview?.setSurfaceProvider(null)
         Log.i(TAG, "Vista de previsualizacion descartada. Surface desconectado.")
+    }
+
+    fun onFrontPreviewAvailable(previewView: PreviewView) {
+        pendingFrontPreviewView = previewView
+        val facial = fatigueCameraManager
+        if (facial != null && faceProcessor?.isActive == true) {
+            try {
+                facial.start(facialLifecycleOwner, previewView)
+                Log.d(TAG, "Front PreviewView vinculado en caliente a FatigueCameraManager.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al vincular front PreviewView: ${e.message}")
+            }
+        }
+    }
+
+    fun onFrontPreviewDropped() {
+        activeFrontPreviewView = null
+        pendingFrontPreviewView = null
+        fatigueCameraManager?.stop()
+        Log.i(TAG, "Front PreviewView descartada. Camara frontal detenida.")
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -824,35 +878,160 @@ class BackgroundCameraService : LifecycleService() {
     // ==========================================
 
     fun toggleFatigueDetection(enable: Boolean) {
-        if (enable) { frontDetector?.start(); Log.i(TAG, "Deteccion de fatiga activada.") }
-        else { frontDetector?.stop(); Log.i(TAG, "Deteccion de fatiga desactivada.") }
+        if (enable) {
+            Log.i(TAG, "Activando deteccion de fatiga...")
+            startFrontCameraSession()
+        } else {
+            Log.i(TAG, "Desactivando deteccion de fatiga.")
+            stopFatigueDetection()
+        }
+    }
+
+    private fun startFrontCameraSession() {
+        val facial = fatigueCameraManager ?: run {
+            Log.e(TAG, "FatigueCameraManager no disponible.")
+            return
+        }
+        val processor = faceProcessor ?: run {
+            Log.e(TAG, "FaceProcessor no disponible.")
+            return
+        }
+        if (processor.isActive) {
+            Log.w(TAG, "FaceProcessor ya esta activo.")
+            return
+        }
+
+        hourResetTime = System.currentTimeMillis()
+        alertCountThisHour = 0
+        closedEyeStartTime = 0L
+        currentClosedEyeDurationMs = 0L
+
+        val frontView = activeFrontPreviewView ?: pendingFrontPreviewView
+        if (frontView == null) {
+            Log.w(TAG, "Front PreviewView aun no disponible — encolando activacion para cuando llegue.")
+            pendingFatigueEnabled = true
+            return
+        }
+
+        facial.setOnFrameAvailable { imageProxy -> processor.processFrame(imageProxy) }
+        processor.start()
+        facialLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED
+        facial.start(facialLifecycleOwner, frontView)
+        Log.i(TAG, "Camara frontal + FaceProcessor activados.")
+        sendFatigueStatusEvent(true, false, 0.0, 0.0)
+    }
+
+    private fun stopFatigueDetection() {
+        fatigueCameraManager?.stop()
+        facialLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
+        faceProcessor?.stop()
+        pendingFatigueEnabled = false
+        closedEyeStartTime = 0L
+        currentClosedEyeDurationMs = 0L
+        currentEar = 0.0
+        currentFaceDetected = false
+        Log.i(TAG, "Deteccion de fatiga completamente detenida.")
+        sendFatigueStatusEvent(false, false, 0.0, 0.0)
     }
 
     fun setEarThreshold(threshold: Double) {
-        if (threshold < 0.1 || threshold > 0.4) { Log.w(TAG, "Umbral EAR fuera de rango (0.1..0.4): $threshold — ignorado."); return }
-        frontDetector?.earThreshold = threshold
+        if (threshold < 0.1 || threshold > 0.4) {
+            Log.w(TAG, "Umbral EAR fuera de rango (0.1..0.4): $threshold — ignorado.")
+            return
+        }
+        earThreshold = threshold
         Log.i(TAG, "Umbral EAR actualizado a $threshold")
     }
 
-    fun getEarThreshold(): Double = frontDetector?.earThreshold ?: 0.2
+    fun getEarThreshold(): Double = earThreshold
 
     fun snoozeFatigueAlert(minutes: Int) {
-        frontDetector?.snooze(minutes)
+        snoozeMinutes = minutes
+        snoozeEndTime = System.currentTimeMillis() + (minutes * 60L * 1000L)
+        isSnoozed = true
         Log.i(TAG, "Snooze de fatiga activado por $minutes minutos.")
     }
 
     fun getFatigueStatus(): Map<String, Any> {
-        val detector = frontDetector
         return mapOf<String, Any>(
-            "enabled" to (detector?.isActive ?: false),
-            "faceDetected" to (detector?.isFaceDetected ?: false),
-            "earValue" to (detector?.currentEar ?: 0.0),
-            "closedEyeDuration" to (detector?.closedEyeDurationActual ?: 0.0),
-            "isSnoozed" to (detector?.isSnoozed ?: false),
-            "alertCount" to (detector?.alertCount ?: 0),
-            "earThreshold" to (detector?.earThreshold ?: 0.2),
-            "maxAlertsPerHour" to (detector?.maxAlertsPerHour ?: 3)
+            "enabled" to (faceProcessor?.isActive ?: false),
+            "faceDetected" to currentFaceDetected,
+            "earValue" to currentEar,
+            "closedEyeDuration" to currentClosedEyeDurationMs.toDouble(),
+            "isSnoozed" to isSnoozed,
+            "alertCount" to alertCountThisHour,
+            "earThreshold" to earThreshold,
+            "maxAlertsPerHour" to maxAlertsPerHour
         )
+    }
+
+    private fun handleFaceProcessingResult(faceDetected: Boolean, earValue: Double) {
+        currentFaceDetected = faceDetected
+        currentEar = earValue
+        val now = System.currentTimeMillis()
+
+        if (!faceDetected || earValue >= earThreshold) {
+            if (closedEyeStartTime > 0L) {
+                Log.d(TAG, "Ojos abiertos. Duracion total cerrados: ${currentClosedEyeDurationMs}ms")
+            }
+            closedEyeStartTime = 0L
+            currentClosedEyeDurationMs = 0L
+        } else {
+            if (closedEyeStartTime == 0L) {
+                closedEyeStartTime = now
+                Log.d(TAG, "Ojos cerrados detectados. Iniciando contador. EAR=$earValue")
+            }
+            currentClosedEyeDurationMs = now - closedEyeStartTime
+            if (currentClosedEyeDurationMs >= closedEyeDurationMs) {
+                val hourElapsed = now - hourResetTime
+                if (hourElapsed > 3600000L) {
+                    alertCountThisHour = 0
+                    hourResetTime = now
+                }
+                if (isSnoozed && now >= snoozeEndTime) {
+                    isSnoozed = false
+                    Log.i(TAG, "Snooze finalizado.")
+                }
+                if (alertCountThisHour < maxAlertsPerHour && !isSnoozed) {
+                    if (now - lastAlertTime > 5000L) {
+                        triggerFatigueAlert(earValue)
+                    }
+                }
+            }
+        }
+
+        if (isSnoozed && now >= snoozeEndTime) {
+            isSnoozed = false
+        }
+
+        sendFatigueStatusEvent(
+            enabled = faceProcessor?.isActive ?: false,
+            faceDetected = faceDetected,
+            earValue = earValue,
+            closedEyeDuration = currentClosedEyeDurationMs.toDouble()
+        )
+    }
+
+    private fun triggerFatigueAlert(earValue: Double) {
+        val now = System.currentTimeMillis()
+        lastAlertTime = now
+        alertCountThisHour++
+        Log.w(TAG, "FATIGA DETECTADA! EAR=$earValue, Alertas esta hora: $alertCountThisHour")
+        triggerVibration()
+        triggerFatigueAlarmSound()
+        statusListener?.onDrowsinessDetected(now, earValue)
+    }
+
+    private fun triggerFatigueAlarmSound() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 2000)
+            Handler(Looper.getMainLooper()).postDelayed({
+                try { toneGen.release() } catch (_: Exception) {}
+            }, 2100)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en alarma de sonido (fatiga): ${e.message}")
+        }
     }
 
     private fun sendFatigueStatusEvent(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double) {

@@ -79,19 +79,28 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
     }
 
     override fun setEarThreshold(threshold: Double) {
+        val service = BackgroundCameraService.instance
+        if (service != null) {
+            service.setEarThreshold(threshold)
+        } else {
+            BackgroundCameraService.pendingEarThreshold = threshold
+        }
+    }
+
+    override fun setDurationThreshold(ms: Long) {
         val intent = Intent(context, BackgroundCameraService::class.java).apply {
-            action = BackgroundCameraService.ACTION_SET_EAR_THRESHOLD
-            putExtra("ear_threshold", threshold)
+            action = BackgroundCameraService.ACTION_SET_DURATION_THRESHOLD
+            putExtra("duration_ms", ms)
         }
         ContextCompat.startForegroundService(context, intent)
     }
 
-    override fun setDurationThreshold(ms: Long) {
-        BackgroundCameraService.instance?.frontDetector?.closedEyeDurationMs = ms
-    }
-
     override fun setMaxAlertsPerHour(max: Int) {
-        BackgroundCameraService.instance?.frontDetector?.maxAlertsPerHour = max
+        val intent = Intent(context, BackgroundCameraService::class.java).apply {
+            action = BackgroundCameraService.ACTION_SET_MAX_ALERTS
+            putExtra("max_alerts", max)
+        }
+        ContextCompat.startForegroundService(context, intent)
     }
 
     override fun snoozeFatigueAlert(minutes: Int) {
@@ -102,14 +111,18 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
     }
 
     override fun getFatigueStatus(): FatigueConfig {
-        val detector = BackgroundCameraService.instance?.frontDetector
-        return FatigueConfig(
-            earThreshold = detector?.earThreshold ?: 0.2,
-            durationThresholdMs = detector?.closedEyeDurationMs ?: 2000L,
-            maxAlertsPerHour = detector?.maxAlertsPerHour ?: 3,
-            isSnoozed = detector?.isSnoozed ?: false,
-            alertCount = detector?.alertCount ?: 0
-        )
+        val service = BackgroundCameraService.instance
+        if (service != null) {
+            val status = service.getFatigueStatus()
+            return FatigueConfig(
+                earThreshold = (status["earThreshold"] as? Double) ?: 0.2,
+                durationThresholdMs = (status["closedEyeDuration"] as? Double)?.toLong() ?: 2000L,
+                maxAlertsPerHour = (status["maxAlertsPerHour"] as? Int) ?: 3,
+                isSnoozed = (status["isSnoozed"] as? Boolean) ?: false,
+                alertCount = (status["alertCount"] as? Int) ?: 0
+            )
+        }
+        return FatigueConfig()
     }
 
     override fun requestOverlayPermission() {
