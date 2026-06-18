@@ -157,6 +157,7 @@ class BackgroundCameraService : LifecycleService() {
         const val ACTION_START_RECORDING = "ACTION_START_RECORDING"
         const val ACTION_TRIGGER_PANIC = "ACTION_TRIGGER_PANIC"
         const val ACTION_STOP_AND_SAVE = "ACTION_STOP_AND_SAVE"
+        const val ACTION_STOP_RECORDING = "ACTION_STOP_RECORDING"
         const val ACTION_STOP_SERVICE = "ACTION_STOP_SERVICE"
         const val ACTION_ENABLE_FATIGUE = "ACTION_ENABLE_FATIGUE"
         const val ACTION_DISABLE_FATIGUE = "ACTION_DISABLE_FATIGUE"
@@ -260,6 +261,7 @@ class BackgroundCameraService : LifecycleService() {
                 ACTION_START_RECORDING -> startRecordingMode()
                 ACTION_TRIGGER_PANIC -> triggerCollisionEvent("Boton de Panico Manual o Burbuja")
                 ACTION_STOP_AND_SAVE -> stopAndSaveBuffer()
+                ACTION_STOP_RECORDING -> stopRecordingWithoutSaving()
                 ACTION_STOP_SERVICE -> stopSelf()
                 ACTION_ENABLE_FATIGUE -> {
                     val enable = intent.getBooleanExtra("enable", true)
@@ -650,7 +652,7 @@ class BackgroundCameraService : LifecycleService() {
     private fun triggerCollisionEvent(reason: String) {
         if (isStoppingService) return
         val now = System.currentTimeMillis()
-        if (now - lastEventTriggerTime < 12000) return
+        if (now - lastEventTriggerTime < 5000) return
         lastEventTriggerTime = now
         Log.w(TAG, "EVENTO DETECTADO POR: $reason")
         saveEvent()
@@ -700,6 +702,37 @@ class BackgroundCameraService : LifecycleService() {
         Log.d(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
         sendStatusUpdate("INICIANDO DUOVIAL")
         currentActiveRecording?.stop()
+    }
+
+    private fun stopRecordingWithoutSaving() {
+        if (serviceState != ServiceState.RECORDING) return
+        if (isSavingEvent) return
+        Log.i(TAG, "Deteniendo grabacion sin guardar buffer...")
+        stopCircularBufferTimers()
+        isStoppingService = true
+        serviceState = ServiceState.STANDBY
+        currentActiveRecording?.stop()
+        cleanupCacheSegments()
+        isSavingEvent = false
+        isStoppingService = false
+        postEventRecordingActive = false
+        saveMode = SaveMode.SAVE_ONLY_CURR
+        hasCompletedSegment0 = false
+        hasCompletedSegment1 = false
+        updateNotification("DuoVial", "Camara lista.")
+        sendStatusUpdate("INACTIVO")
+        Log.i(TAG, "Grabacion detenida sin guardar. Servicio en STANDBY.")
+    }
+
+    private fun cleanupCacheSegments() {
+        try {
+            listOf("segment_0.mp4", "segment_1.mp4", "segment_post.mp4").forEach { name ->
+                File(cacheDir, name).let { if (it.exists()) it.delete() }
+            }
+            Log.d(TAG, "Segmentos de cache eliminados.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al limpiar cache: ${e.message}")
+        }
     }
 
     private fun handleEventSaveTransition() {
