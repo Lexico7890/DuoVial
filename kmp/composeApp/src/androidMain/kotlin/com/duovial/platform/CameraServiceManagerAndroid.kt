@@ -54,7 +54,7 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
 
     override fun startStandby() { sendIntent(BackgroundCameraService.ACTION_START_STANDBY) }
     override fun startRecording() { sendIntent(BackgroundCameraService.ACTION_START_RECORDING) }
-    override fun stopRecording() { sendIntent(BackgroundCameraService.ACTION_STOP_AND_SAVE) }
+    override fun stopRecording() { sendIntent(BackgroundCameraService.ACTION_STOP_RECORDING) }
     override fun triggerPanic() { sendIntent(BackgroundCameraService.ACTION_TRIGGER_PANIC) }
 
     override fun forceReset() {
