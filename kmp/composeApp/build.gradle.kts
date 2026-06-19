@@ -42,6 +42,12 @@ kotlin {
             implementation(libs.aws.cognitoidentity)
         }
 
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.coroutines.test)
+            implementation(libs.turbine)
+        }
+
         androidMain.dependencies {
             implementation(libs.activity.compose)
             implementation(libs.core.ktx)
@@ -60,6 +66,15 @@ kotlin {
 
             implementation(libs.coroutines.android)
             implementation(libs.ktor.client.okhttp)
+        }
+
+        androidUnitTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.junit)
+            implementation(libs.mockk.core)
+            implementation(libs.coroutines.test)
+            implementation(libs.turbine)
+            implementation(libs.robolectric)
         }
     }
 }

@@ -15,6 +15,14 @@ coroutines = "1.9.0"
 workmanager = "2.10.0"
 core-ktx = "1.15.0"
 
+# Testing
+junit = "4.13.2"
+mockk = "1.13.14"
+coroutines-test = "1.9.0"
+turbine = "1.2.0"
+robolectric = "4.14.1"
+compose-ui-test = "1.7.3"
+
 [libraries]
 # Compose
 compose-navigation = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "compose-navigation" }
@@ -59,6 +67,13 @@ coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-androi
 
 # WorkManager
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workmanager" }
+
+# Testing
+junit = { module = "junit:junit", version.ref = "junit" }
+mockk-core = { module = "io.mockk:mockk", version.ref = "mockk" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines-test" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
