@@ -16,6 +16,8 @@ interface CameraServiceManager {
     fun getFatigueStatus(): FatigueConfig
     fun requestOverlayPermission()
 
+    fun loadIncidents(): List<Incident>
+
     fun watchCameraState(): CameraState
     fun watchFaceStatus(): FaceStatus
 }

@@ -10,6 +10,7 @@ import com.duovial.state.CameraServiceManager
 import com.duovial.state.CameraStatus
 import com.duovial.state.FaceStatus
 import com.duovial.state.FatigueConfig
+import com.duovial.state.Incident
 
 class CameraServiceManagerAndroid(private val context: Context) : CameraServiceManager {
 
@@ -128,6 +129,8 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
     override fun requestOverlayPermission() {
         Permissions.openOverlaySettings(context)
     }
+
+    override fun loadIncidents(): List<Incident> = IncidentRepository.scanIncidents(context)
 
     override fun watchCameraState() = AppStateManager.cameraState.value
     override fun watchFaceStatus() = AppStateManager.faceStatus.value

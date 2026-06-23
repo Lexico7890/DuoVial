@@ -807,11 +807,10 @@ class BackgroundCameraService : LifecycleService() {
         val contentValues = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, targetFileName)
             put(MediaStore.Downloads.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.Downloads.RELATIVE_PATH, "Download/DuoVial")
         }
         val resolver = contentResolver
         val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
         } else {
             @Suppress("DEPRECATION") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         }
@@ -828,10 +827,12 @@ class BackgroundCameraService : LifecycleService() {
                     outputStream?.write(buffer, 0, bytesRead)
                 }
                 outputStream?.flush()
-                Log.d(TAG, "Copiado exitoso a Downloads/DuoVial: $targetFileName")
+                Log.d(TAG, "Copiado exitoso a Downloads: $targetFileName")
+            } else {
+                Log.e(TAG, "MediaStore insert devolvio null para $targetFileName")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Excepcion al exportar: ${e.message}")
+            Log.e(TAG, "Excepcion al exportar $targetFileName: ${e.message}")
         } finally {
             try { outputStream?.close(); inputStream?.close() } catch (e: Exception) {}
         }

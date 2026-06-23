@@ -60,6 +60,8 @@ kotlin {
 
             implementation(libs.coroutines.android)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.media3.exoplayer)
+            implementation(libs.media3.ui)
         }
     }
 }

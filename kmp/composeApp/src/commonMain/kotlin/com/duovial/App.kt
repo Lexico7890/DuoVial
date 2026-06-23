@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import com.duovial.auth.AuthService
 import com.duovial.auth.LocalAuthService
+import com.duovial.platform.IncidentPlayerScreen
 import com.duovial.screens.AccountScreen
 import com.duovial.screens.EventsScreen
 import com.duovial.screens.FatigueScreen
@@ -43,6 +44,7 @@ import com.duovial.screens.MonitorScreen
 import com.duovial.screens.SettingsScreen
 import com.duovial.state.AppStateManager
 import com.duovial.state.CameraServiceManager
+import com.duovial.state.Incident
 import com.duovial.state.LocalCameraServiceManager
 import com.duovial.theme.DuoVialBackground
 import com.duovial.theme.DuoVialCardBackground
@@ -63,6 +65,7 @@ fun DuoVialApp(
 ) {
     var activeTab by remember { mutableStateOf(Tab.MONITOR) }
     var showFatigue by remember { mutableStateOf(false) }
+    var selectedIncident by remember { mutableStateOf<Incident?>(null) }
     val cameraState by AppStateManager.cameraState.collectAsState()
 
     CompositionLocalProvider(
@@ -74,7 +77,7 @@ fun DuoVialApp(
             containerColor = DuoVialBackground,
             bottomBar = {
                 AnimatedVisibility(
-                    visible = !showFatigue,
+                    visible = !showFatigue && selectedIncident == null,
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
@@ -124,7 +127,13 @@ fun DuoVialApp(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                when {
+                val currentIncident = selectedIncident
+                if (currentIncident != null) {
+                    IncidentPlayerScreen(
+                        incident = currentIncident,
+                        onBack = { selectedIncident = null }
+                    )
+                } else when {
                     showFatigue -> FatigueScreen(
                         serviceManager = serviceManager,
                         onBack = { showFatigue = false }
@@ -134,7 +143,10 @@ fun DuoVialApp(
                             serviceManager = serviceManager,
                             onOpenFatigue = { showFatigue = true }
                         )
-                        Tab.EVENTS -> EventsScreen()
+                        Tab.EVENTS -> EventsScreen(
+                            serviceManager = serviceManager,
+                            onIncidentSelected = { selectedIncident = it }
+                        )
                         Tab.SETTINGS -> SettingsScreen(serviceManager = serviceManager)
                         Tab.ACCOUNT -> AccountScreen(authService = authService)
                     }

@@ -37,6 +37,12 @@ data class FatigueConfig(
     val alertCount: Int = 0
 )
 
+data class Incident(
+    val timestampSec: Long,
+    val parts: List<String>,
+    val date: String
+)
+
 sealed class AppEvent {
     data class DrowsinessDetected(val timestamp: Long, val earValue: Double) : AppEvent()
 }
