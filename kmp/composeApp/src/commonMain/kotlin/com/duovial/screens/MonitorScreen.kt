@@ -64,7 +64,7 @@ fun MonitorScreen(
     val isSaving = cameraState.status == CameraStatus.GUARDANDO ||
         cameraState.status == CameraStatus.INICIANDO
     val gForce = cameraState.gForce
-    val speedMph = (cameraState.speedKph * 0.621371).toInt()
+    val speedKph = cameraState.speedKph.toInt()
     val statusLabel = when (cameraState.status) {
         CameraStatus.INACTIVO -> "Vigilante apagado"
         CameraStatus.INICIANDO -> "Iniciando DuoVial..."
@@ -174,12 +174,12 @@ fun MonitorScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "MPH",
+                            text = "KPH",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.7f)
                         )
                         Text(
-                            text = "$speedMph",
+                            text = "$speedKph",
                             style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
                             color = DuoVialTextPrimary,
                             fontWeight = FontWeight.W900
