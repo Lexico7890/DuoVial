@@ -201,9 +201,11 @@ class BackgroundCameraService : LifecycleService() {
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            val speedMph = location.speed * 2.23694
-            lastKnownSpeed = speedMph
-            statusListener?.onSpeedChanged(speedMph)
+            if (!location.hasSpeed()) return
+            if (location.accuracy > 20f) return
+            val rawKph = location.speed * 3.6
+            lastKnownSpeed = lastKnownSpeed * 0.6 + rawKph * 0.4
+            statusListener?.onSpeedChanged(lastKnownSpeed)
         }
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         override fun onProviderEnabled(provider: String) {}
@@ -660,7 +662,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun saveEvent() {
         if (isSavingEvent) return
-        triggerVibration()
+        triggerEventSound()
         stopCircularBufferTimers()
         eventTimestamp = System.currentTimeMillis() / 1000
         isSavingEvent = true
@@ -881,10 +883,7 @@ class BackgroundCameraService : LifecycleService() {
                     locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, locationListener)
                     Log.w(TAG, "GPS Provider registrado para velocimetro.")
                 }
-                if (locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true) {
-                    locationManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 0f, locationListener)
-                    Log.w(TAG, "Network Provider registrado para velocimetro.")
-                }
+
             } else { Log.e(TAG, "Sin permisos de GPS — no se puede iniciar velocimetro.") }
         } catch (e: SecurityException) { Log.e(TAG, "Error de seguridad al iniciar velocimetro: ${e.message}") }
         catch (e: Exception) { Log.e(TAG, "Error al iniciar velocimetro: ${e.message}") }
@@ -1065,6 +1064,18 @@ class BackgroundCameraService : LifecycleService() {
             }, 2100)
         } catch (e: Exception) {
             Log.e(TAG, "Error en alarma de sonido (fatiga): ${e.message}")
+        }
+    }
+
+    private fun triggerEventSound() {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+            toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1000)
+            Handler(Looper.getMainLooper()).postDelayed({
+                try { toneGen.release() } catch (_: Exception) {}
+            }, 1100)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en alarma de sonido (evento): ${e.message}")
         }
     }
 
