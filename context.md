@@ -1,7 +1,7 @@
 # 📋 CONTEXT.md — DUOVIAL: DASH CAM INTELIGENTE + PLATAFORMA DE FLOTAS
 
-**Versión**: 2.0
-**Última actualización**: Junio 25, 2026
+**Versión**: 2.1
+**Última actualización**: Junio 27, 2026
 **Estado**: MVP en desarrollo — Funcionalidades base completadas, capa empresarial Fleet en planeación
 **Audiencia**: Agentes de IA, desarrolladores, stakeholders
 
@@ -138,8 +138,7 @@ El creador de este proyecto fue chocado mientras conducía Uber. El otro conduct
 - Cámara trasera captura video continuamente
 - **NO escribe a disco** (usa cache optimizada del OS)
 - Mantiene solo los últimos 15 segundos en cache
-- Cuando detecta un evento (impacto, botón de pánico), guarda esos 15 seg y los 15 segundos posteriores al evento creando dos videos de 15 segundos cada uno
-- Los 15 seg más viejos se descartan automáticamente
+- Cuando detecta un evento (impacto, botón de pánico), guarda el ultimo frame completo (15 seg), el siguiente que puede variar segun el momento del impacto y los 15 segundos posteriores al evento creando de dos a tres videos de 15 o menos segundos cada uno
 - Funciona en background vía Foreground Service
 
 #### 2. Anti-Somnolencia (Detección Facial + Wearables)
@@ -167,9 +166,9 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 
 ### Gestión de Suscripciones
 - **Plan Free**: Buffer circular, auto-inicio, guardado local, anti-somnolencia básico (solo alerta)
-- **Plan Por Evento**: Mismo que Free + procesamiento y descarga de videos por evento específico (pago único por evento)
-- **Plan Premium** ($X/mes): Ilimitado procesamiento de videos, anti-somnolencia avanzado (3 niveles), mantenimiento predictivo, OBD II, colisión + llamada
-- **Plan Fleet** (desde $19.99/mes por vehículo): Todo lo de Premium + Dashboard web, geofencing, reconocimiento facial, métricas de flota, administración centralizada
+- **Plan Por Evento**: Mismo que Free + procesamiento y descarga de videos por evento específico (pago único por evento/$19.900 COP)
+- **Plan Premium** ($10.900COP/mes): 3 videos de hasta 1 minuto de duración al mes, anti-somnolencia avanzado (3 niveles), mantenimiento predictivo, OBD II, colisión + llamada
+- **Plan Fleet** (desde $9.900COP/mes por vehículo): Todo lo de Premium + Dashboard web, geofencing, reconocimiento facial, métricas de flota, administración centralizada
 
 ---
 
@@ -195,11 +194,19 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 | **Wearables** | Health Connect (Android nativo) | Lectura de datos de salud para fatiga en background |
 | **Geofencing** | Geofencing API (Google Play Services) | Zonas de operación |
 | **OBD II** | Bluetooth LE + ELM327 protocol | Datos mecánicos (RPM, temp, voltaje) |
-| **Dashboard Web** | Firebase Hosting + React/Vue | Monitoreo y gestión |
-| **Backend** | Firebase (Auth, Firestore, Functions) + AWS S3 | Datos, almacenamiento, serverless |
-| **Llamadas Automáticas** | Twilio API | Verificación de colisiones |
-| **IA/LLM** | Gemini API (opcional) | Consultas de mantenimiento |
-| **Build** | Gradle + Android Studio | APK firmado localmente |
+| **Dashboard Web** | Vercel + React/Vue + Supabase JS SDK | Hosting + Monitoreo y gestión |
+| **Backend/DB** | Supabase (PostgreSQL + pgvector) | Datos, Auth, Realtime, Storage, Edge Functions |
+| **Auth** | Supabase Auth | Email, social, MFA, SSO, roles |
+| **Realtime** | Supabase Realtime (Postgres LISTEN/NOTIFY) | Mapa en vivo, alertas, telemetría |
+| **Storage** | Supabase Storage (S3-compatible) | Videos, fotos conductores, embeddings faciales |
+| **Edge Functions** | Supabase Edge Functions (Deno) | Webhooks Stripe, lógica servidor, video processing triggers |
+| **Video Processing** | Mux (partner oficial Supabase) | Transcodificación, HLS/DASH, CDN global |
+| **Pagos** | Stripe + Supabase Stripe Sync Engine | Subscriptions, one-time, Customer Portal |
+| **Push Notifications** | OneSignal (MVP) | Alertas push cross-platform |
+| **Llamadas Automáticas** | Twilio API | Verificación de colisiones (IVR) |
+| **IA/LLM** | Gemini API (opcional) | Consultas de mantenimiento predictivo |
+| **Build** | Gradle + Android Studio | APK/AAB firmado localmente |
+| **CI/CD** | GitHub Actions | Build, test, deploy automatizado |
 
 ### Flujo de Datos General
 
@@ -212,14 +219,18 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 ├── OBD II (Datos mecánicos)
 └── Colisión (Acelerómetro + Velocímetro)
          │
-         ▼ (Firestore / Realtime DB)
+         ▼ (Supabase Realtime / Postgres)
 ┌────────────────────────────────────────────┐
-│            ☁️ NUBE (Backend)               │
-│  Firestore (Datos en vivo)                 │
-│  Firebase Auth (Roles)                     │
-│  Cloud Functions (Lógica)                  │
+│            ☁️ NUBE (Supabase Backend)      │
+│  PostgreSQL (Datos relacionales + pgvector)│
+│  Supabase Auth (Roles, MFA, SSO)           │
+│  Supabase Realtime (WebSockets)            │
+│  Supabase Edge Functions (Deno)            │
+│  Supabase Storage (S3-compatible)          │
+│  Mux (Video transcoding + CDN)             │
+│  Stripe (Pagos + Sync Engine)              │
 │  Twilio (Llamadas/SMS)                     │
-│  AWS S3 (Videos solo si usuario autoriza)  │
+│  OneSignal (Push notifications)            │
 └────────────────────────────────────────────┘
          │
          ▼ (WebSocket / Realtime)
@@ -228,7 +239,9 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 ├── Toggles de funcionalidades
 ├── Reportes de incidentes
 ├── Gestión de conductores
-└── Alertas en tiempo real
+├── Alertas en tiempo real
+├── Billing Dashboard
+└── Organization Selector
 ```
 
 ### Flujo de datos local (cámaras + sensores)
@@ -239,7 +252,7 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 │ 1080p @ 30fps → Encoder H.264 (2 Mbps) → Buffer Circular    │
 │                                                              │
 │ Almacenamiento: Cache del sistema Android                    │
-│ Duración: Últimos 30 segundos (2 segmentos de 15 seg)       │
+│ Duración: hasta los Últimos 45 segundos (de 2 a 3 segmentos de 15 seg)       │
 │ Escritura: Solo cuando hay evento (trigger)                  │
 │ Background: Sí, vía Foreground Service                       │
 └─────────────────────────────────────────────────────────────┘
@@ -252,7 +265,7 @@ Misma app, con funcionalidades adicionales de administración centralizada:
         └───────────────────┼───────────────────┘
                             ↓
                   ¿EVENTO DETECTADO?
-                        Sí → Guardar 15 seg previos y 15 seg posteriores a Downloads
+                        Sí → Guardar 15 a 30 seg previos y 15 seg posteriores a Downloads
                         No → Descartar y continuar
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -280,17 +293,243 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 Android File System:
 ├── context.cacheDir/
 │   ├── segment_0.mp4 (descarta después)
-│   └── segment_1.mp4 (descarta después)
+│   ├── segment_1.mp4 (descarta después)
+│   └── segment_2.mp4 (descarta después)
 │
 ├── Downloads/DuoVial/
-│   └── incident_[timestamp]_part0.mp4 (guardado permanente)
-│   └── incident_[timestamp]_part1.mp4 (guardado permanente)
+│   ├── incident_[timestamp]_part0.mp4 (guardado permanente)
+│   ├── incident_[timestamp]_part1.mp4 (guardado permanente)
+│   └── incident_[timestamp]_part2.mp4 (guardado permanente)
 │
 └── SQLite local (offline):
     ├── Eventos de ubicación
     ├── Lecturas de acelerómetro
     └── Logs de viaje (sincronizan al recuperar señal)
 ```
+
+---
+
+## 🏗️ ARQUITECTURAS ESPECÍFICAS
+
+### Video Processing Architecture (Mux + Supabase)
+
+**Flujo completo:**
+
+```
+📱 App Móvil (Colisión / Evento Manual)
+    │
+    ▼ Subida directa (TUS Resumable Upload)
+┌─────────────────────────────────────────────┐
+│  Supabase Storage (Bucket: incident-videos) │
+│  • S3-compatible, signed URLs               │
+│  • RLS: usuario solo ve sus videos          │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Webhook: object.created (Supabase Edge Function)
+┌─────────────────────────────────────────────┐
+│  Edge Function: trigger-mux-transcode       │
+│  • Crea Mux Asset via API                   │
+│  • Input: signed URL Supabase Storage       │
+│  • Output: HLS/DASH adaptive bitrate        │
+│  • Guarda mux_asset_id en tabla incidents   │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Mux Webhook: asset.ready
+┌─────────────────────────────────────────────┐
+│  Edge Function: mux-webhook-handler         │
+│  • Actualiza incident.status = 'ready'      │
+│  • Guarda playback_id, streaming_url        │
+│  • Notifica Realtime a Dashboard Web        │
+└─────────────────────────────────────────────┘
+    │
+    ▼
+🖥️ Dashboard Web / App Móvil
+    • Reproducción via Mux Player (HLS)
+    • CDN global, adaptive streaming
+    • Solo usuarios de la organización (RLS)
+```
+
+**Especificaciones Mux:**
+- **Free Tier**: 100 min encoding/mes, 500 min streaming/mes (suficiente para MVP)
+- **Encoding**: H.264 → HLS (múltiples calidades: 1080p, 720p, 480p, 360p)
+- **Latencia**: ~2-5s para live, instantáneo para VOD
+- **CDN**: Global (200+ PoPs)
+- **Costo estimado Fleet (50 vehículos, 10 incidentes/mes c/u)**: ~$50-100/mes
+
+**Tabla `incidents` (Supabase):**
+```sql
+CREATE TABLE incidents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID REFERENCES organizations(id),
+  vehicle_id UUID REFERENCES vehicles(id),
+  driver_id UUID REFERENCES drivers(id),
+  trigger_type TEXT, -- 'panic', 'accel', 'collision', 'geofence'
+  video_path TEXT, -- Supabase Storage path (original)
+  mux_asset_id TEXT,
+  mux_playback_id TEXT,
+  streaming_url TEXT,
+  status TEXT DEFAULT 'uploading', -- uploading, processing, ready, error
+  g_force NUMERIC,
+  speed_kmh NUMERIC,
+  location GEOGRAPHY(POINT),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  processed_at TIMESTAMPTZ
+);
+
+-- RLS Policy
+CREATE POLICY "org_isolation" ON incidents
+  USING (org_id = current_setting('app.current_org_id')::UUID);
+```
+
+---
+
+### Payments Architecture (Stripe + Supabase Sync Engine)
+
+**Flujo de Suscripción (App Móvil + Dashboard Web):**
+
+```
+👤 Usuario (App / Dashboard)
+    │
+    ▼ Selecciona plan
+┌─────────────────────────────────────────────┐
+│  Frontend llama Supabase Edge Function:     │
+│  create-checkout-session                    │
+│  • Params: price_id, success_url, cancel_url│
+│  • Crea Stripe Checkout Session             │
+│  • Retorna session_id + URL                 │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Redirect a Stripe Checkout (hosted)
+💳 Usuario paga (tarjeta, PSE, efectivo Colombia)
+    │
+    ▼ Stripe Webhook: checkout.session.completed
+┌─────────────────────────────────────────────┐
+│  Stripe Sync Engine (automático)            │
+│  • Sincroniza: customers, subscriptions,    │
+│    invoices, payment_methods a Postgres     │
+│  • Tablas en schema `stripe`                │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Supabase Realtime → Dashboard Web
+🖥️ Billing Dashboard actualizado en vivo
+    • Plan actual, próxima factura, uso
+    • Botón "Gestionar suscripción" → Stripe Customer Portal
+```
+
+**Edge Functions requeridas:**
+| Función | Propósito |
+|---------|-----------|
+| `create-checkout-session` | Crea sesión Checkout para plan seleccionado |
+| `create-portal-session` | Crea sesión Customer Portal (self-service) |
+| `stripe-webhook` | Fallback para eventos no cubiertos por Sync Engine |
+
+**Tablas sincronizadas (Stripe Sync Engine):**
+```sql
+-- Schema: stripe
+stripe.customers        -- customer_id, email, metadata.org_id
+stripe.subscriptions    -- subscription_id, status, price_id, current_period_end
+stripe.prices           -- price_id, unit_amount (COP), currency, recurring.interval
+stripe.products         -- product_id, name (Free, Por Evento, Premium, Fleet)
+stripe.invoices         -- invoice_id, amount_paid, status, hosted_invoice_url
+```
+
+**Precios COP (Stripe Prices):**
+| Plan | Price ID | Monto | Intervalo | Metadata |
+|------|----------|-------|-----------|----------|
+| Free | price_free | 0 | — | tier=free |
+| Por Evento | price_per_event | 19900 | one_time | tier=per_event |
+| Premium | price_premium | 10900 | month | tier=premium |
+| Fleet | price_fleet | 9900 | month | tier=fleet, per_vehicle=true |
+
+**Customer Portal (Self-Service):**
+- Upgrade/downgrade planes
+- Cambiar método de pago
+- Ver historial facturas (descargar PDF)
+- Cancelar suscripción (al final del período)
+- Gestionar vehículos (plan Fleet)
+
+---
+
+### Multi-tenancy Architecture (Organizations + RLS)
+
+**Modelo de datos:**
+```sql
+-- Organizaciones (Empresas / Flotas)
+CREATE TABLE organizations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL, -- para URLs amigables
+  plan TEXT DEFAULT 'free', -- free, per_event, premium, fleet
+  stripe_customer_id TEXT,
+  settings JSONB DEFAULT '{}', -- config global: geofence_defaults, fatigue_thresholds
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Miembros de organización (Roles)
+CREATE TABLE organization_members (
+  org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  role TEXT CHECK (role IN ('owner', 'admin', 'supervisor', 'driver')),
+  invited_by UUID REFERENCES auth.users(id),
+  invited_at TIMESTAMPTZ DEFAULT now(),
+  accepted_at TIMESTAMPTZ,
+  PRIMARY KEY (org_id, user_id)
+);
+
+-- Vehículos pertenecen a organización
+CREATE TABLE vehicles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  plate TEXT NOT NULL,
+  brand_model TEXT,
+  year INTEGER,
+  obd_dongle_id TEXT, -- MAC address ELM327
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Conductores vinculados a organización
+CREATE TABLE drivers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id), -- null si no tiene cuenta app
+  full_name TEXT NOT NULL,
+  license_number TEXT,
+  license_expiry DATE,
+  face_embedding VECTOR(512), -- pgvector para facial recognition
+  phone TEXT,
+  emergency_contact JSONB, -- {name, phone, relationship}
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- RLS Helper: current_org_id()
+CREATE OR REPLACE FUNCTION current_org_id() RETURNS UUID AS $$
+  SELECT current_setting('app.current_org_id')::UUID;
+$$ LANGUAGE sql STABLE;
+
+-- Policy ejemplo: incidents
+CREATE POLICY "org_isolation" ON incidents
+  USING (org_id = current_org_id());
+```
+
+**Flujo Onboarding Fleet (Dashboard Web):**
+```
+1. Admin registra empresa → Crea organization + owner member
+2. Verificación email → Stripe Customer creado automáticamente
+3. Admin invita conductores (email/SMS) → organization_members (pending)
+4. Conductor acepta → Descarga app → Login → Auto-vincula a org
+5. Admin registra vehículos → Asigna conductor + dongle OBD (opcional)
+6. Admin define geofences → Configura toggles por vehículo
+7. Facturación: Admin ve Billing Dashboard → Selecciona plan Fleet
+8. Checkout Stripe → Webhook → Sync Engine → org.plan = 'fleet'
+```
+
+**Dashboard Web - Organization Selector:**
+- Header: Dropdown con organizaciones donde el usuario es member
+- Cambio de org → `app.current_org_id` session variable → RLS filtra todo
+- Owner/Admin ve "Billing" tab; Driver solo ve "Mis Viajes"
 
 ---
 
@@ -316,7 +555,7 @@ Android File System:
 ### Decisión 2: ¿Acelerómetro, GPS o múltiples sensores?
 
 **Decisión Final**: **Multi-sensor** (botón + acelerómetro configurable + colisión con filtro de velocidad)
-**Implementación**: MVP con botón + acelerómetro. Colisión con filtro >40 km/h para Fleet/Premium.
+**Implementación**: MVP con botón + acelerómetro. Colisión con filtro >40 km/h.
 
 ### Decisión 3: ¿React Native / Expo vs. Kotlin Multiplatform?
 
@@ -402,9 +641,9 @@ Android File System:
 | Codec | H.264 |
 | Bitrate | 2 Mbps |
 | Audio | DESACTIVADO |
-| Buffer | Circular, 30 segundos (2 segmentos × 15 seg) |
+| Buffer | Circular, 30 a 45 segundos (2 a 3 segmentos × 15 seg) |
 | Almacenamiento | context.cacheDir |
-| Limpieza | Automática (máximo 2 segmentos en cache) |
+| Limpieza | Automática (máximo 2 a 3 segmentos en cache) |
 | Triggers | Botón Pánico + Acelerómetro (G-Force > 2.5G configurable) + Colisión |
 | Background | Sí, vía Foreground Service + WorkManager Watchdog |
 
@@ -430,10 +669,13 @@ Android File System:
 
 | Especificación | Detalle |
 |---------------|---------|
-| Tecnología | ML Kit Face Detection + Comparación de embeddings |
+| Tecnología | ML Kit Face Detection + Comparación de embeddings (pgvector) |
 | Activación | Manual (toggle en Settings) |
+| Enrollment | Conductor se toma selfie en la app → ML Kit extrae embedding → sync a `drivers.face_embedding` (Supabase) |
 | Frecuencia | 1 foto al iniciar viaje (>20 km/h) |
-| Almacenamiento | Local (borrado en 24h) |
+| Almacenamiento embeddings | pgvector en Supabase Postgres (columna `face_embedding VECTOR(512)` en tabla `drivers`) |
+| Búsqueda | pgvector cosine similarity: `face_embedding <=> '[0.12, 0.45, ...]'` |
+| Almacenamiento foto temporal | Local (borrado en 24h), nunca se sube |
 | Acción | Notificación push: "Rostro no registrado conduciendo" |
 | NO hace | Bloqueos, apagados, ni multas |
 
@@ -454,6 +696,62 @@ Android File System:
 | Modelo de IA | NO entrenamos modelo. Usamos Gemini/OpenAI para consultas específicas: "Dame intervalos de mantenimiento para Chevrolet Spark 2018 en JSON" |
 | Datos OBD (Futuro) | Códigos de error (DTC) se traducen a español con base de datos pública NHTSA |
 | Acción | Notificación al conductor y Admin con kilometraje restante |
+
+**Arquitectura de datos (Supabase):**
+```sql
+-- Reglas de mantenimiento por modelo de vehículo
+CREATE TABLE maintenance_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand TEXT NOT NULL,
+  model TEXT NOT NULL,
+  year_from INTEGER,
+  year_to INTEGER,
+  component TEXT NOT NULL, -- 'oil', 'filter', 'spark_plugs', 'brake_pads'
+  interval_km INTEGER NOT NULL,
+  interval_months INTEGER,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Logs de kilometraje por vehículo
+CREATE TABLE odometer_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vehicle_id UUID REFERENCES vehicles(id),
+  km_reading NUMERIC NOT NULL,
+  source TEXT DEFAULT 'gps', -- 'gps', 'obd', 'manual'
+  recorded_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Lecturas OBD (cuando hay dongle)
+CREATE TABLE obd_readings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vehicle_id UUID REFERENCES vehicles(id),
+  dtc_code TEXT,
+  rpm INTEGER,
+  coolant_temp INTEGER,
+  battery_voltage NUMERIC,
+  recorded_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Alertas generadas
+CREATE TABLE maintenance_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vehicle_id UUID REFERENCES vehicles(id),
+  org_id UUID REFERENCES organizations(id),
+  rule_id UUID REFERENCES maintenance_rules(id),
+  component TEXT NOT NULL,
+  km_remaining NUMERIC,
+  days_remaining INTEGER,
+  severity TEXT DEFAULT 'info', -- 'info', 'warning', 'critical'
+  status TEXT DEFAULT 'pending', -- 'pending', 'acknowledged', 'resolved'
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+**Job programado (pg_cron):**
+- Evalúa reglas cada 24h para cada vehículo activo
+- Genera alertas cuando km_remaining < 500 o days_remaining < 7
+- Notifica al conductor (app) y admin (Dashboard) según severidad
 
 ### 6.6 Auto-Inicio por Actividad
 
@@ -477,12 +775,33 @@ Android File System:
 
 | Especificación | Detalle |
 |---------------|---------|
-| Tecnología | Firebase Hosting + React / Vue.js + Firestore (realtime) |
-| Roles | Admin (dueño), Supervisor (gerente), Conductor (solo ve su propio score) |
-| Vista principal | Mapa en tiempo real con ubicación de vehículos |
+| Tecnología | Vercel + React/Vue.js + Supabase JS SDK (Realtime) |
+| Roles | Owner (dueño empresa), Admin (gerente), Supervisor, Driver (solo ve su propio score) |
+| Vista principal | Mapa en tiempo real con ubicación de vehículos (Supabase Realtime) |
 | Toggles por vehículo | Activar/Desactivar: Facial, Anti-somnolencia, OBD, Geofencing |
-| Incidentes | Lista con filtros (por fecha, vehículo, tipo) + Reproducción de video (si está en la nube) |
+| Incidentes | Lista con filtros (por fecha, vehículo, tipo) + Reproducción de video (via Mux Player HLS) |
 | Exportación | Reportes en CSV/PDF (incidentes, kilometraje, alertas) |
+| Organization Selector | Dropdown header con organizaciones del usuario; cambio filtra todo por `current_org_id` |
+
+**Billing Dashboard (gestión de suscripciones):**
+- Vista: plan actual, próximo cobro, método de pago, uso (minutos Mux, eventos)
+- Botón "Gestionar suscripción" → abre Stripe Customer Portal (self-service)
+- Upgrade/downgrade de plan por vehículo
+- Historial de facturas con link de descarga PDF (Stripe hosted invoice)
+- Límite de eventos en plan "Por Evento": counter visible + alerta al acercarse al límite
+
+**Fleet Onboarding Flow (flujo de configuración):**
+```
+1. Admin registra empresa → Crea organization + owner member (Supabase Auth)
+2. Verificación email → Stripe Customer creado automáticamente (Sync Engine)
+3. Admin invita conductores (email/SMS vía OneSignal/Email) → organization_members (pending)
+4. Conductor acepta → Descarga app → Login Supabase Auth → Auto-vincula a org
+5. Conductor toma selfie en app → embedding facial → sync a drivers.face_embedding
+6. Admin registra vehículos (placa, marca, modelo) → Asigna conductor + dongle OBD (opcional)
+7. Admin define geofences (radio, ubicación) → Configura toggles por vehículo
+8. Facturación: Admin ve Billing Dashboard → Selecciona plan Fleet
+9. Checkout Stripe → Webhook → Sync Engine → org.plan = 'fleet'
+```
 
 ### 6.8 Anti-somnolencia + Wearables (El Copiloto)
 
@@ -496,7 +815,7 @@ Android File System:
 |-------|-----------|--------|-------------|
 | 🟢 Nivel 1: "El Acompañante" (Prevención) | Wearable: FC elevada + HRV baja. Conducción > 2h. | (1) Sugerencia de ruta a gasolinera/descanso. (2) Sugerencia: bajar A/C 1.5°C, subir brillo. (3) Playlist energética (120+ BPM). | Health Connect + Google Maps API + MediaPlayer |
 | 🟡 Nivel 2: "El Despertador" (Alerta) | ML Kit: EAR bajo + Wearable: sin movimiento. | (1) Alarma sonora fuerte + Vibración. (2) Pantalla roja parpadeante. (3) Voz: "¡CONDUCTOR, MANTÉN LOS OJOS ABIERTOS!". | CameraX (Frontal) + ML Kit + TTS |
-| 🔴 Nivel 3: "El Ángel Guardián" (Emergencia) | No responde al Nivel 2 en 8s, o ojos cerrados > 3s. | (1) Notificación PUSH y SMS al contacto de emergencia con ubicación en Maps. (2) Reduce volumen de música, da instrucciones de voz para detenerse. (3) Muestra ruta al área de descanso más cercana. | Firebase Functions + Twilio SMS + Google Maps Directions API |
+| 🔴 Nivel 3: "El Ángel Guardián" (Emergencia) | No responde al Nivel 2 en 8s, o ojos cerrados > 3s. | (1) Notificación PUSH y SMS al contacto de emergencia con ubicación en Maps. (2) Reduce volumen de música, da instrucciones de voz para detenerse. (3) Muestra ruta al área de descanso más cercana. | Supabase Edge Functions + OneSignal Push + Twilio SMS + Google Maps Directions API |
 
 **Nota**: La cámara frontal SOLO se activa en Nivel 2 (FatigueScreen), y se apaga al salir de ese nivel. En background, la fuente primaria es el wearable (Health Connect).
 
@@ -574,6 +893,14 @@ Al iniciar la app o entrar a FatigueScreen:
 | Limpieza automática | Los eventos guardados viven 7 días en el celular. Pasado ese tiempo, la app notifica: "Tienes X videos sin respaldo. Se eliminarán en 3 días." |
 | Buffer en cache | El buffer circular (30s) se borra automáticamente al salir del modo Vigilante. |
 
+**Offline Sync Strategy:**
+- **Prioridad de sincronización**: (1) Eventos de colisión, (2) Alertas de geofencing, (3) Eventos de fatiga, (4) Logs de viaje, (5) Telemetría general
+- **Conflict resolution**: Server-wins (Supabase es fuente de verdad). Si el usuario editó algo offline que el servidor ya cambió, se sobreescribe con versión del servidor
+- **Backoff exponencial**: Reintentos 1s → 2s → 4s → 8s → 16s → 30s (máximo). Resetear al recuperar conexión
+- **Métricas de sync**: Tabla `sync_status` en SQLite: `{pending_count, last_sync_at, failed_count, bytes_pending}`
+- **Batch uploads**: Agrupar registros en batches de 50 para reducir llamadas API
+- **Connectivity check**: `Supabase.client.from('organizations').select('id').limit(1)` como health check antes de sync masivo
+
 ### 6.10 Integración OBD II (ELM327)
 
 **Valor**: Datos reales del motor para mantenimiento y diagnóstico.
@@ -603,7 +930,7 @@ Al iniciar la app o entrar a FatigueScreen:
 | Especificación | Detalle |
 |---------------|---------|
 | Condición de activación | (G-Force > 3.5G) AND (Velocidad GPS > 40 km/h) AND (Duración impacto > 150ms) |
-| Acción 1 (Subida de video) | El video del buffer (15s antes + 15s después) se comprime y sube automáticamente a AWS S3 (solo este caso excepcional). |
+| Acción 1 (Subida de video) | El video del buffer (15s antes + 15s después) se comprime y sube automáticamente a Supabase Storage → Mux transcoding (solo este caso excepcional). |
 | Acción 2 (Llamada de verificación) | La app envía señal a Cloud Function. Twilio llama al usuario. |
 
 **Flujo de llamada (IVR)**:
@@ -641,7 +968,7 @@ Prioridad: ⭐⭐⭐ EN PLANEACIÓN
 Cobertura: Accidentes graves a velocidad de carretera
 Implementación: Acelerómetro G-Force + Velocidad GPS
 Condición: (G-Force > 3.5G) AND (Velocidad > 40 km/h) AND (Duración > 150ms)
-Acción: Subida automática de video a AWS S3 + Llamada Twilio de verificación
+Acción: Subida automática de video a Supabase Storage → Mux transcoding + Llamada Twilio de verificación
 Filtro: Requiere >40 km/h para evitar falsos positivos en ciudad/estacionamiento
 ```
 
@@ -665,6 +992,18 @@ Prioridad: ⭐⭐⭐ EN PLANEACIÓN
 Cobertura: Cruce de zonas de operación
 Implementación: Geofencing API + GPS
 Acción: Notificación push al Admin + Guardado de ubicación + Video de 5s
+```
+
+### Trigger 7: Geofence Cross (NUEVO — Fleet)
+```
+Prioridad: ⭐⭐⭐ EN PLANEACIÓN
+Cobertura: Detección de entrada/salida de zona geofenceada
+Implementación: Geofencing API (Google Play Services) + Supabase Edge Function
+Condición: GPS cruza radio de geofence definida por Admin
+Acción 1: Notificación push OneSignal al Admin: "[Vehículo] salió de zona [nombre_zona]"
+Acción 2: Guardado de ubicación exacta + timestamp en tabla geofence_events
+Acción 3: Grabación de video 5s (cámara trasera) como evidencia de quién manejaba
+Datos guardados: vehicle_id, org_id, fence_id, event_type ('enter'|'exit'), location, timestamp
 ```
 
 ---
@@ -704,11 +1043,12 @@ Acción: Notificación push al Admin + Guardado de ubicación + Video de 5s
 | 7 | Reconocimiento Facial | ❌ No | ❌ No | ❌ No | ✅ Sí. (Desactivado por defecto). Notifica al Admin si conductor no registrado. |
 | 8 | Mantenimiento Predictivo | ❌ No | ❌ No | ✅ Sí. Alertas de kilometraje dentro de la app. | ✅ Sí. Admin ve estado de mantenimiento de toda la flota en Dashboard. |
 | 9 | Integración OBD II | ❌ No | ❌ No | ✅ Sí. (Requiere dongle ELM327 comprado por separado). | ✅ Sí. Datos mecánicos de todos los vehículos agregados al Dashboard. |
-| 10 | Servicio de instalación OBD Asistida | ❌ No | ❌ No | 💰 Pago único ($9.99 USD) | 💰 Pago único ($9.99 USD) o incluido en contrato anual. |
+| 10 | Servicio de instalación OBD Asistida | ❌ No | ❌ No | 💰 Pago único ($39.900 COP) | 💰 Pago único ($39.900 COP) o incluido en contrato anual. |
 | 11 | Detección de Colisión + Llamada automática (Twilio) | ❌ No | ❌ No | ✅ Sí. Filtro >40km/h, sube video automáticamente, llama al usuario, notifica a contacto de emergencia. | ✅ Sí. Mismo que Premium + Admin recibe alerta en tiempo real en Dashboard. |
 | 12 | Dashboard Web (Administración) | ❌ No | ❌ No | ❌ No | ✅ Sí. Mapa en vivo, gestión de vehículos/conductores, toggles on/off por vehículo, exportación de reportes (CSV), historial de incidentes. |
-| 13 | Modo Offline (GPS/logs sin internet) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
-| 14 | Limpieza automática de videos (7 días) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
+| 13 | Billing Dashboard (Gestión de Suscripciones) | ❌ No | ❌ No | ❌ No | ✅ Sí. Plan actual, upgrade/downgrade, historial facturas, Stripe Portal self-service. |
+| 14 | Modo Offline (GPS/logs sin internet) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
+| 15 | Limpieza automática de videos (7 días) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
 
 ---
 
@@ -834,7 +1174,11 @@ Acción: Notificación push al Admin + Guardado de ubicación + Video de 5s
 | **Falsos positivos de colisión** | Media | Alto | Filtro >40km/h + confirmación por llamada Twilio |
 | **Costo de Twilio por llamada** | Baja | Medio | Solo en colisiones graves; incluido en precio Fleet |
 | **Resistencia de conductores a ser monitoreados** | Media | Alto | Facial off por defecto; enfoque en seguridad, no castigo |
-| **Dependencia de Firebase/Google** | Baja | Medio | Arquitectura permite migrar backend si es necesario |
+| **Dependencia de Supabase** | Baja | Medio | Open source, self-hostable, arquitectura permite migrar si es necesario |
+| **Vendor lock-in Stripe** | Baja | Medio | Sync Engine mantiene datos en Postgres; migración posible con esfuerzo |
+| **Costos Mux a escala** | Media | Medio | Monitorear usage; evaluar Cloudflare Stream como alternativa si supera $200/mes |
+| **Límites OneSignal (10k free)** | Baja | Medio | Migración a FCM/APNs directo o plan pagado OneSignal al crecer |
+| **Fuga de datos multi-tenancy** | Baja | Muy Alto | RLS policies exhaustivas, tests de aislamiento, auditoría periódica |
 
 ---
 
@@ -1049,7 +1393,7 @@ FatigueScreen.kt:
 ⚠️ Calibración de umbrales de fatiga por wearable
 ⚠️ Precisión del filtro de colisión (>40km/h + 3.5G)
 ⚠️ Costo de Twilio por llamada a escala
-⚠️ Latencia de Firestore en zonas con mala conexión
+⚠️ Latencia de Supabase Realtime en zonas con mala conexión
 
 ---
 
@@ -1061,9 +1405,13 @@ FatigueScreen.kt:
 5. **Health Connect para wearables**: estándar abierto, sin acoplamiento a marca.
 6. **Servicio como fuente única de verdad**: evita desincronización UI/servicio.
 7. **Sugerencia de wearables compatibles**: mejora UX cuando el hardware es limitado.
-8. **Firebase como backend principal**: serverless, realtime, bajo costo inicial.
-9. **Facial solo alerta, nunca bloqueo**: cumple regulaciones y expectativas del usuario.
-10. **Pivot a B2B con Fleet**: mayor MRR por cliente, menor churn, diferenciación clara.
+8. **Supabase como backend principal**: PostgreSQL open source, realtime nativo, Auth, Storage, Edge Functions, sin vendor lock-in, self-hostable.
+9. **Mux para video processing**: partner oficial Supabase, transcodificación HLS/DASH, CDN global, free tier generoso para MVP.
+10. **Stripe + Supabase Stripe Sync Engine para pagos**: Checkout, Portal, Subscriptions, Webhooks, sincronización automática a Postgres.
+11. **OneSignal para push notifications (MVP)**: gratis hasta 10k usuarios, cross-platform, fácil integración.
+12. **Multi-tenancy con Organizations + RLS**: aislamiento de datos por empresa, invitaciones, selector de organización en Dashboard.
+13. **Facial solo alerta, nunca bloqueo**: cumple regulaciones y expectativas del usuario.
+14. **Pivot a B2B con Fleet**: mayor MRR por cliente, menor churn, diferenciación clara.
 
 ### Próximas validaciones
 - [ ] Testing preview frontal en 5+ dispositivos
@@ -1075,6 +1423,188 @@ FatigueScreen.kt:
 - [ ] Prueba piloto de Dashboard web con 3 empresas
 - [ ] Prueba de integración OBD II con 5 dongles ELM327 diferentes
 - [ ] Prueba de flujo Twilio (llamada IVR) en simulación de colisión
+
+---
+
+## 🧪 TESTING STRATEGY
+
+### Estrategia de Testing (Alto Nivel)
+
+| Capa | Herramienta | Cobertura Objetivo | Ejecución |
+|------|-------------|-------------------|-----------|
+| **Unit Tests (Kotlin)** | JUnit5 + MockK | >80% código nativo (cámara, sensores, buffer) | Cada PR (CI) |
+| **Integration Tests** | Supabase Local + Testcontainers | Endpoints Edge Functions, RLS policies, sync | Semanal (CI) |
+| **UI Tests** | Compose Testing + Espresso | Flujos críticos: monitor, fatigue, event save | Pre-release |
+| **E2E Tests** | Maestro (mobile) + Playwright (dashboard) | Flujo completo: auto-start → evento → sync → dashboard | Pre-release |
+| **Load Tests** | k6 | API endpoints, sync concurrente, WebSockets | Pre-launch |
+| **Device Tests** | Firebase Test Lab (gradle Managed Devices) | Compatibilidad cámara, sensores, background service | Cada release |
+
+### Categorías de Test
+
+**Críticos (bloquean release):**
+- Buffer circular: guardado de video tras evento
+- Foreground Service: supervivencia 2h+ en background
+- Supabase Auth: login, roles, RLS
+- Stripe: checkout flow, webhook processing
+
+**Important (deben pasar antes de beta):**
+- Health Connect: lectura FC/HRV con 3+ wearables
+- CameraX: preview estable, concurrent cameras
+- Geofencing: trigger al cruzar zona
+- OneSignal: push notification delivery
+
+**Nice-to-have (validar en piloto):**
+- Performance en gama baja (<$200k COP)
+- Battery impact real vs estimado
+- Edge cases de facial recognition (iluminación, ángulos)
+
+---
+
+## 🚀 CI/CD & DEPLOYMENT
+
+### Pipeline Android (App Móvil)
+
+```
+GitHub Actions Workflow:
+├── Trigger: push a main / PR
+├── Steps:
+│   ├── 1. Checkout + Setup JDK 17
+│   ├── 2. Gradle Build (assembleDebug)
+│   ├── 3. Unit Tests (testDebugUnitTest)
+│   ├── 4. Lint Check (lintDebug)
+│   ├── 5. APK/AAB Build (bundleRelease - solo main)
+│   └── 6. Upload Artifact → Play Store Internal Testing
+│
+├── Environments:
+│   ├── dev: build automático en cada PR
+│   ├── staging: build automático en merge a develop
+│   └── production: build manual (tag v*)
+│
+└── Secrets:
+    ├── KEYSTORE_PASSWORD
+    ├── SUPABASE_URL / ANON_KEY
+    └── ONESIGNAL_APP_ID
+```
+
+### Pipeline Dashboard Web
+
+```
+Vercel (auto-deploy):
+├── Trigger: push a main
+├── Framework: React/Vue
+├── Env vars:
+│   ├── VITE_SUPABASE_URL
+│   ├── VITE_SUPABASE_ANON_KEY
+│   ├── VITE_STRIPE_PUBLISHABLE_KEY
+│   └── VITE_MUX_ENV_KEY
+├── Branch previews: PR automático
+└── Production: merge a main
+```
+
+### Pipeline Backend (Supabase)
+
+```
+Supabase CLI (local → remote):
+├── Migrations: supabase db push
+├── Edge Functions: supabase functions deploy
+├── Config: supabase config push
+├── Environments:
+│   ├── local: supabase start (Docker)
+│   ├── staging: supabase --project-id staging
+│   └── production: supabase --project-id prod
+└── CI Integration: supabase link + db push en GitHub Actions
+```
+
+---
+
+## ⚖️ LEGAL & COMPLIANCE
+
+> **⚠️ SECCIÓN PLACEHOLDER — Requiere profundización con abogado especializado en Colombia**
+
+### Marco Legal Aplicable (Colombia)
+
+| Regulación | Relevancia | Estado |
+|------------|-----------|--------|
+| **Ley 1581 de 2012** (Protección de Datos Personales) | Recolecta ubicación, video, datos biométricos (facial) | Pendiente revisión |
+| **Decreto 1377 de 2013** | Implementación Ley 1581, autorización, habeas data | Pendiente revisión |
+| **Ley 2300 de 2023** (Código General del Sector Telecomunicaciones) | Datos biométricos requieren autorización expresa | Pendiente revisión |
+| **GDPR** (si expansion a Europa) | Protección datos UE, derecho al olvido, portabilidad | Fase 2+ |
+
+### Consideraciones Clave
+
+1. **Consentimiento facial recognition**: Requiere autorización expresa e informada (no puede ser oculto). Disclaimer: "Los datos faciales se usan SOLO para verificar identidad del conductor. Se eliminan al terminar contrato."
+
+2. **Grabación de video**: En Colombia, grabar audio sin consentimiento puede violar la Ley 1581. Por eso la app **NO graba audio** — solo video. Esto simplifica cumplimiento.
+
+3. **Derecho al olvido**: Si un conductor deja la empresa, sus datos (facial, ubicación histórica) deben eliminarse. Implementar endpoint en Supabase Edge Function.
+
+4. **Datos de ubicación**: Requieren consentimiento claro. Guardar solo lo necesario (eventos, no trayectoria continua).
+
+5. **Almacenamiento**: Datos deben estar en servidor con jurisdiction Colombia o con transferencia adecuada (Supabase region us-east-1 es aceptable bajo normas actuales).
+
+### Acciones Pendientes
+
+- [ ] Consultar abogado de protección de datos en Colombia
+- [ ] Redactar Privacy Policy específica para DuoVial
+- [ ] Crear flujo de consentimiento en app (onboarding)
+- [ ] Implementar endpoint "Eliminar mis datos" (right to erasure)
+- [ ] Evaluar si se necesita DPO (Data Protection Officer)
+
+---
+
+## 📊 MONITORING & OBSERVABILITY
+
+### Stack de Monitoreo
+
+| Capa | Herramienta | Propósito |
+|------|-------------|-----------|
+| **Crashes Android** | Firebase Crashlytics | Crash reports, ANRs, exception tracking |
+| **Performance Android** | Firebase Performance | Startup time, frame rendering, network |
+| **Backend Logs** | Supabase Logs (Dashboard) | Edge Functions, Auth, Database queries |
+| **Custom Metrics** | Supabase Postgres (tablas) | Eventos/hora, videos procesados, alertas |
+| **Uptime** | BetterStack (o similar) | Health checks API endpoints |
+| **Dashboard Analytics** | PostHog (self-host o cloud) | User events en Dashboard Web |
+
+### Métricas Custom a Monitorear
+
+**App Móvil (via Supabase):**
+```sql
+-- Eventos por hora (tabla events_log)
+CREATE TABLE events_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID,
+  vehicle_id UUID,
+  event_type TEXT, -- 'collision', 'panic', 'geofence', 'fatigue'
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Índices para queries frecuentes
+CREATE INDEX idx_events_log_created ON events_log(created_at);
+CREATE INDEX idx_events_log_org ON events_log(org_id);
+```
+
+**Dashboard Web (via PostHog o Mixpanel):**
+- Usuarios activos por día/semana
+- Tiempo en página (mapa, incidentes, settings)
+- Clicks en toggles de funcionalidades
+- Errores de carga de video (Mux failures)
+
+**Backend (via Supabase):**
+- Edge Function invocation count + latency
+- Database connection pool usage
+- Storage bandwidth (Supabase Storage)
+- Mux encoding minutes consumed
+- Stripe subscription changes
+
+### Alertas Críticas
+
+| Condición | Severidad | Acción |
+|-----------|-----------|--------|
+| Edge Function error rate > 5% | 🔴 Crítica | Investigar logs, rollback si necesario |
+| Database connections > 80% pool | 🟡 Warning | Escalar plan Supabase o optimizar queries |
+| Mux encoding minutes > 80% free tier | 🟡 Warning | Evaluar upgrade o optimizar uploads |
+| Crash rate > 1% de sesiones | 🔴 Crítica | Hotfix obligatorio |
+| Supabase storage > 80% quota | 🟡 Warning | Limpiar archivos huérfanos o escalar |
 
 ---
 
@@ -1123,10 +1653,19 @@ Monitoreamos temperatura del dispositivo. Si excede umbral seguro, entramos en m
 ### 7. ¿Qué dongles OBD II son compatibles?
 Cualquier dongle ELM327 Bluetooth estándar funciona (costo $10-$15 USD). Recomendamos versiones con chip PIC18F25K80 por su estabilidad. Evitar versiones "mini" azules de $5 que suelen ser clones inestables.
 
+### 8. ¿Cómo funciona el procesamiento de video?
+Cuando ocurre un evento (colisión, botón pánico), el video se sube a Supabase Storage. Una Edge Function dispara la transcodificación en Mux (HLS/DASH, CDN global). El Dashboard reproduce via Mux Player. Free tier: 100 min encoding/mes, 500 min streaming/mes.
+
+### 9. ¿Cómo funcionan los pagos?
+Stripe maneja checkout y suscripciones. Supabase Stripe Sync Engine sincroniza customers, subscriptions, invoices a Postgres automáticamente. El Dashboard lee estado de suscripción desde Postgres (realtime). Customer Portal para self-service.
+
+### 10. ¿Qué pasa con mis datos si quiero irme?
+Supabase es open source (PostgreSQL). Puedes exportar tu DB, self-hostear Supabase, o migrar a otro Postgres. Los videos en Mux son tuyos (puedes descargar assets). Stripe Sync Engine mantiene tus datos de facturación en tu DB.
+
 ---
 
-**Documento versión**: 2.0
-**Última actualización**: Junio 25, 2026
+**Documento versión**: 2.1
+**Última actualización**: Junio 27, 2026
 **Siguiente review**: Julio 2026
 
 **Contactar**: [Oscar's info aquí]
