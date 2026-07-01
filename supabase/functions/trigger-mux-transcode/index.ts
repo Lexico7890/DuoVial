@@ -10,12 +10,12 @@ serve(async (req) => {
   const record = await req.json()
 
   const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    Deno.env.get('SB_URL')!,
+    Deno.env.get('SB_SERVICE_ROLE_KEY')!
   )
 
   // Construir la URL pública del video recién subido
-  const videoUrl = `https://${Deno.env.get('SUPABASE_PROJECT_REF')}.supabase.co/storage/v1/object/${record.bucket}/${record.key}`
+  const videoUrl = `https://${Deno.env.get('SB_PROJECT_REF')}.supabase.co/storage/v1/object/${record.bucket}/${record.key}`
 
   console.log(`[trigger-mux-transcode] Creando Mux Asset para: ${videoUrl}`)
 

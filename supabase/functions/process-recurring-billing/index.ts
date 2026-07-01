@@ -46,8 +46,8 @@ serve(async (_req) => {
   console.log(`  Fecha: ${new Date().toISOString()}`)
 
   const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    Deno.env.get('SB_URL')!,
+    Deno.env.get('SB_SERVICE_ROLE_KEY')!
   )
 
   // 1. Encontrar suscripciones activas Wompi que necesitan renovación
