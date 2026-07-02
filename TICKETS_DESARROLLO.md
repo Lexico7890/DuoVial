@@ -1,6 +1,6 @@
 # TICKETS DE DESARROLLO — DuoVial MVP
 
-**Versión**: 2.0 | **Fecha**: Junio 29, 2026
+**Versión**: 3.0 | **Fecha**: Junio 30, 2026
 **Repositorio**: `C:\Users\camip\Desktop\ocdev\DuoVial`
 **Convención**: `[FASE]-[ID]` — Ej: `A-01`, `C-03`, `G-01`
 
@@ -13,7 +13,7 @@
 | # | Funcionalidad | Sección CONTEXT.md | Estado |
 |---|--------------|-------------------|--------|
 | 1 | Multi-tenancy (Organizations + RLS) | Arquitectura Multi-tenancy | **SIN TICKET** |
-| 2 | Stripe + Supabase Sync Engine (reemplaza Wompi) | Payments Architecture | **SIN TICKET** (E-01 usa Wompi) |
+| 2 | Google Play Billing + Wompi (híbrido app/web) | Payments Architecture | **SIN TICKET** (E-01 necesita reescribirse) |
 | 3 | Mux video processing (transcoding HLS/DASH) | Video Processing Architecture | **SIN TICKET** |
 | 4 | OneSignal push notifications | Stack tecnológico | **SIN TICKET** |
 | 5 | Twilio IVR para colisiones | Colisión + Llamada Automática | **SIN TICKET** |
@@ -37,7 +37,8 @@
 
 | Ticket | Cambio requerido | Razón |
 |--------|-----------------|-------|
-| E-01 | Cambiar Wompi/PayU por **Stripe** | CONTEXT.md especifica Stripe + Sync Engine |
+| E-01 | Cambiar Stripe por **Google Play Billing + Wompi** | Stripe no funciona bien en Colombia; se usa esquema híbrido |
+| G-04 | Cambiar Stripe + Sync Engine por **Google Play Billing + Wompi** | Mismo motivo que E-01 |
 | C-04 | Agregar tablas: `organizations`, `organization_members`, `vehicles`, `drivers`, `maintenance_rules`, `odometer_logs`, `obd_readings`, `maintenance_alerts`, `geofence_events`, `drivers.face_embedding` | Multi-tenancy + Fleet features |
 | F-01 | Mover de `fase:post-mvp` a `fase:fleet` (MVP Fleet) | CONTEXT.md lo marca como MVP Fleet |
 | F-03 | Mover de `fase:post-mvp` a `fase:fleet` (MVP Fleet) | CONTEXT.md lo marca como MVP Fleet |
@@ -55,7 +56,7 @@
 | 1 | **G-01** | Setup Supabase Edge Functions | Ninguna |
 | 2 | **G-02** | Setup OneSignal push notifications | Ninguna |
 | 3 | **G-03** | Setup Mux video processing | Ninguna |
-| 4 | **G-04** | Setup Stripe + Supabase Sync Engine | Ninguna |
+| 4 | **G-04** | Setup Google Play Billing + Wompi | Ninguna |
 | 5 | **C-04** | Schema de BD completo (actualizado) | G-01 |
 
 ### Fase A: Estabilidad del Vigilante (Semana 3-6)
@@ -285,41 +286,48 @@ Configurar Mux para transcodificación de videos de incidentes. Crear cuenta, co
 
 ---
 
-## G-04 — Setup Stripe + Supabase Sync Engine
+## G-04 — Setup Google Play Billing + Wompi
 
 | Campo | Valor |
 |-------|-------|
 | **Tipo** | Chore / Infra |
 | **Prioridad** | P0 |
 | **Dependencias** | Ninguna |
-| **Archivos afectados** | Stripe Dashboard, Supabase (migraciones SQL), Supabase Edge Functions |
+| **Archivos afectados** | Google Play Console, Wompi Dashboard, Google Cloud Console, Supabase (Edge Functions, migraciones) |
 | **Estimación** | 5 puntos |
 
 ### Descripción
 
-Configurar Stripe para pagos y Supabase Stripe Sync Engine para sincronización automática de customers, subscriptions, invoices a PostgreSQL.
+Configurar esquema híbrido de pagos: **Google Play Billing** para compras dentro de la app Android (obligatorio por política de Google para bienes digitales) y **Wompi** para pagos desde la web Dashboard (PSE, Nequi, tarjetas colombianas). NO se usa Stripe.
 
 ### Criterios de Aceptación
 
-- **Dado** que Stripe está configurado
-  **Cuando** se crea un producto y precio en Stripe Dashboard
-  **Entonces** aparecen en la tabla `stripe.products` y `stripe.prices` en Supabase.
+- **Dado** que Google Play Console está configurado
+  **Cuando** se crean los productos `premium_monthly`, `fleet_monthly`, `per_event`
+  **Entonces** están disponibles para compra con precios en COP.
 
-- **Dado** que un usuario completa Checkout
-  **Cuando** Stripe envía `checkout.session.completed`
-  **Entonces** el Sync Engine crea customer, subscription y payment_method en Supabase.
+- **Dado** que RTDN está configurado con Pub/Sub
+  **Cuando** ocurre un evento de suscripción (compra, renovación, cancelación)
+  **Entonces** la Edge Function recibe la notificación y actualiza la BD.
 
-- **Dado** que un admin abre el Billing Dashboard
-  **Cuando** consulta `stripe.subscriptions`
-  **Entonces** ve el plan actual, próximo cobro y método de pago.
+- **Dado** que Wompi está configurado en sandbox
+  **Cuando** se crea un payment link desde la Edge Function
+  **Entonces** el usuario puede pagar con PSE, Nequi o tarjeta.
+
+- **Dado** que Wompi envía webhook `transaction.updated`
+  **Cuando** la Edge Function lo recibe
+  **Entonces** verifica firma SHA256, consulta estado en API, y actualiza la BD.
 
 ### Notas Técnicas
 
-- Instalar Stripe Sync Engine via Supabase Dashboard (Settings > Database > Stripe Sync).
-- Crear productos en Stripe: Free ($0), Por Evento ($19,900 COP), Premium ($10,900 COP/mes), Fleet ($9,900 COP/mes/vehículo).
-- Configurar webhook: `https://{project-ref}.supabase.co/functions/v1/stripe-webhook`.
-- Tablas sincronizadas: `stripe.customers`, `stripe.subscriptions`, `stripe.prices`, `stripe.products`, `stripe.invoices`.
-- Para Colombia: habilitar tarjeta débito/crédito, PSE, Nequi vía Stripe.
+- **Google Play Console**: Crear cuenta developer ($25 USD), crear productos de suscripción y one-time, configurar RTDN con Pub/Sub, crear Service Account con rol Finance.
+- **Google Cloud Console**: Crear proyecto, habilitar Pub/Sub API, crear tópico y suscripción para RTDN.
+- **Wompi**: Crear cuenta sandbox, obtener Public Key, Private Key, Event Secret, configurar webhook URL.
+- **Edge Functions nuevas**: `verify-google-purchase`, `wompi-webhook`, `create-wompi-link`, `process-recurring-billing`.
+- **Edge Functions eliminadas**: `stripe-webhook`, `create-checkout-session`, `create-portal-session`.
+- **Migración nueva**: `006_billing.sql` con tablas `products`, `purchases`, `subscriptions`, `billing_events`, `wompi_card_tokens`.
+- **Wompi NO tiene suscripciones nativas**: Para cobros recurrentes Fleet, usar scheduled function (pg_cron) con tokens de tarjeta guardados.
+- **Precios COP**: Premium $10,900/mes, Fleet $9,900/mes/vehículo, Por Evento $19,900, Instalación OBD $39,900.
 
 ---
 
@@ -662,88 +670,81 @@ Integrar la cámara frontal migrada a CameraX (A-01) con la lógica de detecció
 
 ---
 
-## E-01 — Integrar Stripe para pagos en Colombia
+## E-01 — Integrar Google Play Billing + Wompi para pagos
 
 | Campo | Valor |
 |-------|-------|
 | **Tipo** | Feature |
 | **Prioridad** | P2 |
 | **Dependencias** | C-01, G-04 |
-| **Archivos afectados** | Nuevo: `PaymentService.kt`, `PaymentScreen.kt`. `build.gradle.kts` |
+| **Archivos afectados** | Nuevo: `PaymentService.kt`, `PaymentScreen.kt`, `BillingManager.kt`. `build.gradle.kts` |
 | **Estimación** | 8 puntos |
 
 ### Descripción
 
-**ACTUALIZADO**: Usar Stripe en lugar de Wompi/PayU. Integrar Stripe Checkout para pagos con métodos colombianos: tarjeta débito/crédito, PSE, Nequi. El flujo usa Supabase Edge Functions para crear sesiones de Checkout y Customer Portal para self-service.
+**ESQUEMA HÍBRIDO**: Google Play Billing para compras dentro de la app Android (suscripciones + pago por evento) y Wompi para pagos desde la web Dashboard (Fleet, instalación OBD).
 
 ### Criterios de Aceptación
 
-- **Dado** que un usuario quiere pagar por un informe ($19,900 COP)
-  **Cuando** toca "Obtener Informe Completo"
-  **Entonces** se abre Stripe Checkout (WebView o redirect) con el precio configurado.
+- **Dado** que un usuario quiere suscribirse a Premium desde la app
+  **Cuando** toca "Suscribirse - $10,900/mes"
+  **Entonces** se abre Google Play Billing UI nativa, paga, y la app verifica el purchaseToken con la Edge Function.
 
-- **Dado** que el usuario completa el pago en Stripe Checkout
-  **Cuando** Stripe envía `checkout.session.completed`
-  **Entonces** el Sync Engine crea el registro en `stripe.subscriptions` y se desbloquea el informe.
+- **Dado** que un admin quiere suscribirse a Fleet desde el Dashboard web
+  **Cuando** toca "Suscribirse - $9,900/mes/vehículo"
+  **Entonces** se crea un payment link de Wompi, el admin paga con PSE/Nequi/tarjeta, y el webhook actualiza el plan.
 
-- **Dado** que el usuario quiere gestionar su suscripción
-  **Cuando** toca "Administrar Plan"
-  **Entonces** se abre Stripe Customer Portal (upgrade/downgrade, método de pago, facturas).
+- **Dado** que un usuario quiere procesar un video (pago por evento)
+  **Cuando** toca "Procesar video - $19,900"
+  **Entonces** se abre Google Play Billing, paga, y se desbloquea el procesamiento.
 
 - **Dado** que el pago falla
-  **Cuando** Stripe retorna error
-  **Entonces** se muestra mensaje claro y NO se desbloquea el informe.
-
-### Precios Stripe (COP)
-
-| Plan | Precio | Intervalo | Metadata |
-|------|--------|-----------|----------|
-| Free | $0 | — | tier=free |
-| Por Evento | $19,900 | one_time | tier=per_event |
-| Premium | $10,900 | month | tier=premium |
-| Fleet | $9,900 | month/vehicle | tier=fleet |
+  **Cuando** Google Play o Wompi retornan error
+  **Entonces** se muestra mensaje claro y NO se desbloquea el servicio.
 
 ### Notas Técnicas
 
-- Flujo: App → Edge Function `create-checkout-session` → Stripe Checkout → Webhook → Sync Engine → Supabase Realtime → App/Dashboard.
-- Customer Portal: Edge Function `create-portal-session` → Stripe Portal → self-service.
-- Para Colombia: Stripe soporta tarjeta, PSE, Nequi nativamente.
+- **App Android**: Integrar Google Play Billing Library v6+. Usar `BillingClient` para query products, launch billing flow, handle purchases. Enviar purchaseToken a Edge Function `verify-google-purchase` para verificación server-side. Llamar `acknowledgePurchase()` tras verificación exitosa.
+- **Web Dashboard**: Llamar Edge Function `create-wompi-link` para crear payment link. Redirigir a checkout.wompi.co. Recibir confirmación via webhook.
+- **Dependencia Android**: `com.android.billingclient:billing:6.0.1`
+- **Wompi**: Montos en centavos (1 COP = 100 centavos). Verificar firma SHA256 del webhook.
+- **Google Play**: Precios en micros (1 COP = 1,000,000 micros). Acknowledge obligatorio en 3 días.
 
 ---
 
-## E-06 — Customer Portal (self-service)
+## E-06 — Gestión de suscripción (UI propia)
 
 | Campo | Valor |
 |-------|-------|
 | **Tipo** | Feature |
 | **Prioridad** | P2 |
 | **Dependencias** | E-01, G-04 |
-| **Archivos afectados** | `SettingsScreen.kt`, `AccountScreen.kt`, Edge Functions |
-| **Estimación** | 3 puntos |
+| **Archivos afectados** | `SettingsScreen.kt`, `AccountScreen.kt`, `BillingScreen.kt` (nuevo) |
+| **Estimación** | 5 puntos |
 
 ### Descripción
 
-Integrar Stripe Customer Portal para que el usuario pueda: upgrade/downgrade de plan, cambiar método de pago, ver historial de facturas (descargar PDF), cancelar suscripción.
+Construir UI propia para gestión de suscripciones (reemplaza Stripe Customer Portal). El usuario puede: ver plan actual, fecha de próximo cobro, método de pago, cancelar suscripción, cambiar plan.
 
 ### Criterios de Aceptación
 
 - **Dado** que el usuario tiene una suscripción activa
-  **Cuando** toca "Administrar Suscripción"
-  **Entonces** se abre Stripe Customer Portal en WebView.
+  **Cuando** abre Settings > Mi Plan
+  **Entonces** ve: plan actual, próximo cobro, método de pago, botón cancelar.
 
-- **Dado** que el usuario está en el Portal
-  **Cuando** cambia de plan (ej. Free → Premium)
-  **Entonces** el cambio se refleja en Supabase (`profiles.plan`) en <1 minuto.
+- **Dado** que el usuario cancela su suscripción
+  **Cuando** confirma la cancelación
+  **Entonces** se marca `cancel_at_period_end = true` y la suscripción sigue activa hasta fin del período.
 
-- **Dado** que el usuario cancela la suscripción
-  **Cuando** el período actual termina
-  **Entonces** vuelve a Free y se le notifica.
+- **Dado** que el usuario quiere cambiar de plan
+  **Cuando** selecciona un plan diferente
+  **Entonces** se inicia el flujo de compra del nuevo plan y se cancela el anterior al final del período.
 
 ### Notas Técnicas
 
-- Edge Function `create-portal-session` retorna URL del Portal.
-- Stripe Customer Portal maneja toda la lógica de billing.
-- Webhook `customer.subscription.updated` sincroniza cambios a Supabase.
+- **Google Play Billing**: Para cancelar, usar `BillingClient` para obtener subscription status. La cancelación real se hace en Google Play (el usuario cancela desde la app de Google Play o desde la app DuoVial redirigiendo).
+- **Wompi**: Para cancelar, actualizar `subscriptions.cancel_at_period_end = true` en la BD. El scheduled function dejará de cobrar.
+- **UI**: Mostrar estado de suscripción desde tabla `subscriptions` de Supabase.
 
 ---
 
@@ -1273,7 +1274,7 @@ Implementar auto-inicio del Vigilante cuando se detecta actividad de conducción
 G-01 (Edge Functions) ──┐
 G-02 (OneSignal) ────────┤
 G-03 (Mux) ──────────────┤
-G-04 (Stripe) ───────────┤
+G-04 (Google Play+Wompi)─┤
                          ├── C-04 (Schema) ──┬── C-05 (Multi-tenancy) ──┬── F-01 (Geofencing)
                          │                    │                           ├── F-04 (Facial)
                          │                    │                           ├── F-05 (Fleet Onboarding)
@@ -1295,11 +1296,11 @@ C-01 (Supabase Auth) ────┬── C-02 (Login opcional)
                          ├── C-03 (Storage) ── E-02 (PDF Report)
                          └── C-05 (Multi-tenancy)
 
-E-01 (Stripe pagos) ─────┬── E-02 (PDF) ── E-03 (Pago evento)
+E-01 (Google Play+Wompi)─┬── E-02 (PDF) ── E-03 (Pago evento)
                          ├── E-04 (Pago día) ── E-05 (Dashboard fatiga)
-                         └── E-06 (Customer Portal)
+                         └── E-06 (Gestión suscripción UI propia)
 ```
 
 ---
 
-*Documento v2.0 — Fuente única de verdad para tickets de desarrollo. Cualquier cambio en alcance debe reflejarse aquí y comunicarse al equipo.*
+*Documento v3.0 — Fuente única de verdad para tickets de desarrollo. Pagos: Google Play Billing (app) + Wompi (web). Cualquier cambio en alcance debe reflejarse aquí y comunicarse al equipo.*
