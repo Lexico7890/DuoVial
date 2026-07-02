@@ -9,6 +9,7 @@ import androidx.core.view.WindowCompat
 import com.duovial.auth.AuthService
 import com.duovial.platform.AuthServiceAndroid
 import com.duovial.platform.CameraServiceManagerAndroid
+import com.duovial.platform.IncidentRepository
 import com.duovial.platform.Permissions
 import com.duovial.platform.SettingsManagerAndroid
 import com.duovial.state.AppStateManager
@@ -70,6 +71,18 @@ class MainActivity : ComponentActivity() {
             scope.launch {
                 restoreSettings()
                 serviceManager.startStandby()
+            }
+        }
+
+        // Limpieza silenciosa de videos antiguos (>72 horas)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val deleted = IncidentRepository.cleanupOldIncidents(this@MainActivity)
+                if (deleted > 0) {
+                    android.util.Log.i("MainActivity", "Videos antiguos eliminados: $deleted")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Error en limpieza de videos: ${e.message}")
             }
         }
 

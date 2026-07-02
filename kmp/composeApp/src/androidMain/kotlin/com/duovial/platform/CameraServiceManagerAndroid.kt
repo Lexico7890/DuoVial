@@ -25,6 +25,7 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
                     else -> CameraStatus.INACTIVO
                 }
                 AppStateManager.updateCameraStatus(mapped)
+                AppStateManager.updateBubbleActive(BackgroundCameraService.bubbleActive)
             }
 
             override fun onAccelChanged(gForce: Double) {
@@ -46,6 +47,10 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
 
             override fun onDrowsinessDetected(timestamp: Long, earValue: Double) { }
         }
+    }
+
+    fun onTemperatureChanged(tempCelsius: Float) {
+        AppStateManager.updateTemperature(tempCelsius)
     }
 
     private fun sendIntent(action: String) {
@@ -128,6 +133,22 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
 
     override fun requestOverlayPermission() {
         Permissions.openOverlaySettings(context)
+    }
+
+    override fun getTemperature(): Float {
+        return BackgroundCameraService.instance?.getTemperature() ?: 0f
+    }
+
+    override fun setAutoStartEnabled(enabled: Boolean) {
+        BackgroundCameraService.instance?.setAutoStartEnabled(enabled)
+    }
+
+    override fun isAutoStartEnabled(): Boolean {
+        return BackgroundCameraService.instance?.isAutoStartEnabled() ?: false
+    }
+
+    override fun cancelAutoStart() {
+        BackgroundCameraService.instance?.cancelAutoStart()
     }
 
     override fun loadIncidents(): List<Incident> = IncidentRepository.scanIncidents(context)

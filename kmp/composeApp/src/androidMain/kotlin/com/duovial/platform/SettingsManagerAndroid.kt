@@ -40,4 +40,10 @@ class SettingsManagerAndroid(context: Context) : SettingsManager {
 
     override suspend fun setFatigueEnabled(value: Boolean) =
         settings.putBoolean("fatigue_enabled", value)
+
+    override suspend fun isAutoStartEnabled(): Boolean =
+        settings.getBoolean("auto_start_enabled", false)
+
+    override suspend fun setAutoStartEnabled(value: Boolean) =
+        settings.putBoolean("auto_start_enabled", value)
 }

@@ -31,11 +31,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +80,34 @@ fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
                 title = "Burbuja Flotante de Panico",
                 description = "Habilita un boton flotante arrastrable que permanece visible sobre otras aplicaciones para registrar incidentes instantaneamente."
             ) {
+                val context = LocalContext.current
+                val hasOverlayPermission = remember {
+                    mutableStateOf(android.provider.Settings.canDrawOverlays(context))
+                }
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (hasOverlayPermission.value) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialOrange.copy(alpha = 0.05f))
+                        .border(1.dp, if (hasOverlayPermission.value) DuoVialNeonGreen.copy(alpha = 0.25f) else DuoVialOrange.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (hasOverlayPermission.value) DuoVialNeonGreen else DuoVialOrange)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (hasOverlayPermission.value) "Habilitada en el sistema" else "No autorizada",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasOverlayPermission.value) DuoVialNeonGreen else DuoVialOrange
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -160,6 +191,58 @@ fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
                             .fillMaxWidth(progress).height(6.dp)
                             .background(DuoVialNeonGreen, RoundedCornerShape(3.dp))
                     )
+                }
+            }
+
+            // Auto-start toggle card
+            val autoStartEnabled = remember { mutableStateOf(serviceManager?.isAutoStartEnabled() ?: false) }
+            SettingsCard(
+                icon = Icons.Outlined.FlashOn,
+                iconColor = DuoVialNeonGreen,
+                title = "Auto-Inicio del Vigilante",
+                description = "El Vigilante se activara automaticamente cuando alcances 30 km/h. Desactivado por defecto."
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (autoStartEnabled.value) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialBorder.copy(alpha = 0.3f))
+                        .border(1.dp, if (autoStartEnabled.value) DuoVialNeonGreen.copy(alpha = 0.25f) else DuoVialBorder, RoundedCornerShape(10.dp))
+                        .clickable {
+                            autoStartEnabled.value = !autoStartEnabled.value
+                            serviceManager?.setAutoStartEnabled(autoStartEnabled.value)
+                        }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (autoStartEnabled.value) "Auto-inicio ACTIVADO" else "Auto-inicio DESACTIVADO",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (autoStartEnabled.value) DuoVialNeonGreen else DuoVialTextSecondary
+                        )
+                        Text(
+                            text = "Se activara al alcanzar 30 km/h con 5 seg de espera",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                            color = DuoVialTextSecondary
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(if (autoStartEnabled.value) DuoVialNeonGreen else DuoVialBorder)
+                    ) {
+                        if (autoStartEnabled.value) {
+                            Icon(
+                                imageVector = Icons.Outlined.FlashOn,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(16.dp).align(Alignment.Center)
+                            )
+                        }
+                    }
                 }
             }
 

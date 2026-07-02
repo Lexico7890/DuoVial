@@ -1,8 +1,8 @@
 # 📋 CONTEXT.md — DUOVIAL: DASH CAM INTELIGENTE + PLATAFORMA DE FLOTAS
 
-**Versión**: 2.1
-**Última actualización**: Junio 27, 2026
-**Estado**: MVP en desarrollo — Funcionalidades base completadas, capa empresarial Fleet en planeación
+**Versión**: 3.1
+**Última actualización**: Julio 2, 2026
+**Estado**: MVP en desarrollo — App Android funcional (unit tests existentes), backend Supabase desplegado (6 migraciones + 7 Edge Functions), framework de agentes IA configurado, Dashboard Web pendiente
 **Audiencia**: Agentes de IA, desarrolladores, stakeholders
 
 ---
@@ -61,6 +61,83 @@ DuoVial es una **app Android descargable desde Google Play Store** que convierte
 - Modo offline con sincronización automática
 
 **Modelo de negocio**: Suscripción mensual por vehículo (desde $19.99/mes para Fleet) + servicios de instalación OBD. Planes disponibles: Free, Por Evento, Premium, y Fleet (Empresas). Todo se construye sobre la misma app base DuoVial.
+
+---
+
+## 📊 ESTADO DE IMPLEMENTACIÓN (Julio 2, 2026)
+
+### Lo que YA está construido y funcional
+
+| Módulo | Estado | Detalle |
+|--------|--------|---------|
+| **App Android (KMP + Compose)** | ✅ Funcional | Kotlin Multiplatform + Compose Multiplatform, build exitoso |
+| **Buffer Circular (Modo Vigilante)** | ✅ Implementado | CameraX rear, 1080p, dos segmentos de 15s, Foreground Service |
+| **Acelerómetro G-Force** | ✅ Implementado | SensorManager nativo, umbral configurable 1.5–5.0G, UI updates cada 200ms |
+| **Velocímetro GPS** | ✅ Implementado | LocationManager nativo, filtro pasa-bajo, KPH |
+| **Anti-Somnolencia (Básico)** | ✅ Implementado | CameraX frontal + ML Kit EAR, FatigueScreen, vibración + alarma |
+| **Floating Bubble (PIP)** | ✅ Implementado | WindowManager overlay, trigger de pánico al tocar |
+| **UI Completa** | ✅ Implementada | MonitorScreen, FatigueScreen, EventsScreen, SettingsScreen, AccountScreen, LoginScreen, IncidentPlayerScreen |
+| **Estado y Comunicación** | ✅ Implementado | AppStateManager, CameraServiceManager, SettingsManager, ServiceLocator |
+| **Unit Tests (parcial)** | ✅ Implementados | Tests para auth, engine logic, platform utilities (commit e604ea3) |
+| **Supabase Backend** | ✅ Desplegado | 6 migraciones SQL (17 tablas), 1 bucket de storage |
+| **Edge Functions** | ✅ Desplegadas (7) | verify-google-purchase, create-wompi-link, wompi-webhook, process-recurring-billing, trigger-mux-transcode, mux-webhook-handler, send-push-notification |
+| **Billing (Google Play)** | ✅ Backend listo | Verificación de compras, creación de subscriptions en DB |
+| **Billing (Wompi)** | ✅ Backend listo | Links de pago, webhooks con HMAC, cobros recurrentes via pg_cron |
+| **Video Processing (Mux)** | ✅ Backend listo | Transcoding automático al subir video, webhook de asset ready |
+| **Push Notifications** | ✅ Backend listo | Edge Function vía OneSignal desplegada |
+| **Multi-tenancy (Organizations)** | ✅ Schema listo | organizations, organization_members, vehicles, drivers + RLS |
+| **Incidencias + Telemetría** | ✅ Schema listo | incidents, geofence_events, vehicle_telemetry + RLS |
+| **Mantenimiento** | ✅ Schema listo | maintenance_rules, odometer_logs, obd_readings, maintenance_alerts |
+
+### Lo que FALTA construir
+
+| Módulo | Estado | Prioridad |
+|--------|--------|-----------|
+| **Auth real (Supabase Auth)** | ⚠️ Demo mode | Alta — reemplazar auth actual |
+| **Dashboard Web** | ❌ No construido | Alta — crítico para Fleet |
+| **Geofencing (cliente)** | ❌ No implementado | Alta — solo schema en DB |
+| **Reconocimiento Facial (enrollment + comparación)** | ⚠️ Parcial — solo detección | Alta — falta embedding y pgvector |
+| **Colisión + Filtro Velocidad** | ❌ No implementado | Alta — acelerómetro + GPS + Twilio |
+| **Llamada Automática (Twilio)** | ❌ No implementado | Alta — Edge Function pendiente |
+| **OBD II (Bluetooth LE)** | ❌ No implementado | Media — solo schema en DB |
+| **Mantenimiento Predictivo (Lógica)** | ❌ No implementado | Media — solo schema en DB |
+| **Auto-Inicio por Actividad** | ❌ No implementado | Media — Activity Recognition API |
+| **Health Connect (Wearables)** | ❌ No implementado | Media — lectura de datos de salud |
+| **Anti-Somnolencia Niveles 1-3** | ⚠️ Solo Nivel 2 básico | Media — falta escalada completa |
+| **Offline Sync** | ❌ No implementado | Media — SQLite + batch sync |
+| **CI/CD (GitHub Actions)** | ❌ No configurado | Media |
+| **Tests (Integration/E2E)** | ❌ No implementados | Media — Unit tests parciales existen |
+| **Play Store Listing** | ❌ No preparado | Baja — post-MVP |
+
+### Estructura del código
+
+```
+DuoVial/
+├── kmp/                          # ← CÓDIGO PRINCIPAL
+│   ├── build.gradle.kts          # Build root KMP
+│   ├── settings.gradle.kts
+│   ├── gradle/libs.versions.toml # Version catalog
+│   └── composeApp/
+│       ├── build.gradle.kts      # App module
+│       └── src/
+│           ├── commonMain/       # Compose UI + interfaces
+│           └── androidMain/      # CameraX, ML Kit, Services, Sensors
+├── supabase/                     # ← BACKEND DESPLEGADO
+│   ├── migrations/               # 6 archivos SQL
+│   └── functions/                # 7 Edge Functions
+├── .opencode/                    # ← AGENTES IA (OpenCode framework)
+│   └── agents/                   # 3 agentes: mid-level-dev, tech-lead, qa-engineer
+├── assets/                       # ← Imágenes fuente (icon.png, adaptive-icon, favicon, splash)
+├── scripts/                      # ← Utilidades (resize_icon.ps1)
+├── android/                      # ⚠️ LEGACY (vacío, ignorar)
+├── node_modules/                 # ⚠️ LEGACY (vacío, ignorar)
+├── .env.example                  # Template de variables de entorno (SB, Mux, Wompi, etc.)
+├── anti-drowsiness-implementation.md  # Guía técnica: anti-somnolencia + CameraX + Health Connect
+├── FASE_0_Implementation.md      # Guía de implementación Fase 0 (Edge Functions, billing, schema)
+├── CONTEXT.md                    # Este documento
+├── AGENT.md                      # Guías para agentes de IA
+└── TICKETS_DESARROLLO.md         # 49 tickets en 9 fases
+```
 
 ---
 
@@ -199,14 +276,16 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 | **Auth** | Supabase Auth | Email, social, MFA, SSO, roles |
 | **Realtime** | Supabase Realtime (Postgres LISTEN/NOTIFY) | Mapa en vivo, alertas, telemetría |
 | **Storage** | Supabase Storage (S3-compatible) | Videos, fotos conductores, embeddings faciales |
-| **Edge Functions** | Supabase Edge Functions (Deno) | Webhooks Stripe, lógica servidor, video processing triggers |
+| **Edge Functions** | Supabase Edge Functions (Deno) | Webhooks Wompi/Google Play, lógica servidor, video processing triggers |
 | **Video Processing** | Mux (partner oficial Supabase) | Transcodificación, HLS/DASH, CDN global |
-| **Pagos** | Stripe + Supabase Stripe Sync Engine | Subscriptions, one-time, Customer Portal |
+| **Pagos (App)** | Google Play Billing (in-app purchases) | Subscriptions y one-time desde la app Android |
+| **Pagos (Web/Dashboard)** | Wompi (pasarela colombiana) | Pagos web para Fleet, instalación OBD, suscripciones recurrentes |
 | **Push Notifications** | OneSignal (MVP) | Alertas push cross-platform |
 | **Llamadas Automáticas** | Twilio API | Verificación de colisiones (IVR) |
 | **IA/LLM** | Gemini API (opcional) | Consultas de mantenimiento predictivo |
 | **Build** | Gradle + Android Studio | APK/AAB firmado localmente |
 | **CI/CD** | GitHub Actions | Build, test, deploy automatizado |
+| **AI Agents** | OpenCode Framework (3 agentes) | Mid-level-dev, tech-lead, qa-engineer |
 
 ### Flujo de Datos General
 
@@ -228,7 +307,8 @@ Misma app, con funcionalidades adicionales de administración centralizada:
 │  Supabase Edge Functions (Deno)            │
 │  Supabase Storage (S3-compatible)          │
 │  Mux (Video transcoding + CDN)             │
-│  Stripe (Pagos + Sync Engine)              │
+│  Google Play Billing (Pagos App)           │
+│  Wompi (Pagos Web/Dashboard)               │
 │  Twilio (Llamadas/SMS)                     │
 │  OneSignal (Push notifications)            │
 └────────────────────────────────────────────┘
@@ -383,70 +463,117 @@ CREATE POLICY "org_isolation" ON incidents
 
 ---
 
-### Payments Architecture (Stripe + Supabase Sync Engine)
+### Payments Architecture (Google Play Billing + Wompi)
 
-**Flujo de Suscripción (App Móvil + Dashboard Web):**
+**Flujo de Suscripción (App Móvil — Google Play Billing):**
 
 ```
-👤 Usuario (App / Dashboard)
+👤 Usuario (App Android)
     │
-    ▼ Selecciona plan
+    ▼ Selecciona plan en la app
 ┌─────────────────────────────────────────────┐
-│  Frontend llama Supabase Edge Function:     │
-│  create-checkout-session                    │
-│  • Params: price_id, success_url, cancel_url│
-│  • Crea Stripe Checkout Session             │
-│  • Retorna session_id + URL                 │
+│  Google Play Billing (in-app purchases)     │
+│  • Launch billing flow desde la app         │
+│  • Google maneja checkout, tarjeta, PSE     │
+│  • Retorna purchaseToken + productId        │
 └─────────────────────────────────────────────┘
     │
-    ▼ Redirect a Stripe Checkout (hosted)
-💳 Usuario paga (tarjeta, PSE, efectivo Colombia)
-    │
-    ▼ Stripe Webhook: checkout.session.completed
+    ▼ App llama Supabase Edge Function
 ┌─────────────────────────────────────────────┐
-│  Stripe Sync Engine (automático)            │
-│  • Sincroniza: customers, subscriptions,    │
-│    invoices, payment_methods a Postgres     │
-│  • Tablas en schema `stripe`                │
+│  Edge Function: verify-google-purchase      │
+│  • Verifica purchase con Google Play API    │
+│  • Crea registro en tabla purchases         │
+│  • Activa/renueva subscription              │
 └─────────────────────────────────────────────┘
     │
     ▼ Supabase Realtime → Dashboard Web
-🖥️ Billing Dashboard actualizado en vivo
-    • Plan actual, próxima factura, uso
-    • Botón "Gestionar suscripción" → Stripe Customer Portal
+🖥️ Billing status actualizado en tiempo real
 ```
 
-**Edge Functions requeridas:**
-| Función | Propósito |
-|---------|-----------|
-| `create-checkout-session` | Crea sesión Checkout para plan seleccionado |
-| `create-portal-session` | Crea sesión Customer Portal (self-service) |
-| `stripe-webhook` | Fallback para eventos no cubiertos por Sync Engine |
+**Flujo de Suscripción (Dashboard Web — Wompi):**
 
-**Tablas sincronizadas (Stripe Sync Engine):**
+```
+👤 Admin (Dashboard Web)
+    │
+    ▼ Selecciona plan Fleet
+┌─────────────────────────────────────────────┐
+│  Frontend llama Edge Function:              │
+│  create-wompi-link                          │
+│  • Genera referencia única                  │
+│  • Crea link de pago Wompi (24h expiry)     │
+│  • Crea purchase record (pending)           │
+│  • Retorna payment_url                      │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Redirect a Wompi Checkout
+💳 Admin paga (tarjeta, PSE, efectivo Colombia)
+    │
+    ▼ Wompi Webhook: transaction.updated
+┌─────────────────────────────────────────────┐
+│  Edge Function: wompi-webhook               │
+│  • Verifica firma HMAC SHA-256              │
+│  • Actualiza purchase status                │
+│  • Activa subscription al aprobar           │
+│  • Registra billing_events (audit log)      │
+└─────────────────────────────────────────────┘
+    │
+    ▼ Suscripciones recurrentes (Wompi no tiene nativo)
+┌─────────────────────────────────────────────┐
+│  Edge Function: process-recurring-billing   │
+│  • Ejecuta vía pg_cron cada 24h             │
+│  • Cobra con wompi_card_tokens guardados    │
+│  • Polling de confirmación (hasta 5 min)    │
+│  • Retry 3 veces + grace period antes       │
+│    de cancelar                              │
+└─────────────────────────────────────────────┘
+```
+
+**Edge Functions de pagos (7 functions desplegadas):**
+
+| Función | Propósito | Estado |
+|---------|-----------|--------|
+| `verify-google-purchase` | Verifica compra Google Play, crea purchase + subscription | ✅ Completa |
+| `create-wompi-link` | Crea link de pago Wompi para Dashboard Web | ✅ Completa |
+| `wompi-webhook` | Recibe webhooks de Wompi, actualiza estado | ✅ Completa |
+| `process-recurring-billing` | Renovaciones recurrentes de Wompi (pg_cron) | ✅ Completa |
+| `trigger-mux-transcode` | Dispara transcodificación Mux al subir video | ✅ Completa |
+| `mux-webhook-handler` | Recibe webhook de Mux (asset ready) | ✅ Completa |
+| `send-push-notification` | Envía push vía OneSignal | ✅ Completa |
+
+**Tablas de billing (Supabase):**
+
 ```sql
--- Schema: stripe
-stripe.customers        -- customer_id, email, metadata.org_id
-stripe.subscriptions    -- subscription_id, status, price_id, current_period_end
-stripe.prices           -- price_id, unit_amount (COP), currency, recurring.interval
-stripe.products         -- product_id, name (Free, Por Evento, Premium, Fleet)
-stripe.invoices         -- invoice_id, amount_paid, status, hosted_invoice_url
+-- products: catálogo de productos
+products (id, name, type, channel, price_cop, external_product_id, features)
+
+-- purchases: transacciones individuales
+purchases (id, user_id, org_id, product_id, channel, external_id, status, amount_cop)
+
+-- subscriptions: suscripciones activas
+subscriptions (id, user_id, org_id, product_id, status, period_dates, wompi_card_token_id)
+
+-- billing_events: audit log de todos los webhooks
+billing_events (id, source, event_type, payload, processed)
+
+-- wompi_card_tokens: tokens de tarjeta para cobros recurrentes
+wompi_card_tokens (id, user_id, wompi_token, last_four, brand)
 ```
 
-**Precios COP (Stripe Prices):**
-| Plan | Price ID | Monto | Intervalo | Metadata |
-|------|----------|-------|-----------|----------|
-| Free | price_free | 0 | — | tier=free |
-| Por Evento | price_per_event | 19900 | one_time | tier=per_event |
-| Premium | price_premium | 10900 | month | tier=premium |
-| Fleet | price_fleet | 9900 | month | tier=fleet, per_vehicle=true |
+**Precios COP (Seed Data):**
 
-**Customer Portal (Self-Service):**
-- Upgrade/downgrade planes
-- Cambiar método de pago
-- Ver historial facturas (descargar PDF)
-- Cancelar suscripción (al final del período)
-- Gestionar vehículos (plan Fleet)
+| Plan | Canal | Monto | Intervalo | ID Externo |
+|------|-------|-------|-----------|------------|
+| Premium Mensual | Google Play | $10,900 | monthly | premium_monthly |
+| Fleet Mensual | Google Play | $9,900 | monthly | fleet_monthly |
+| Por Evento | Google Play | $19,900 | one_time | per_event |
+| Instalación OBD | Wompi | $39,900 | one_time | obd_installation |
+| Premium Mensual | Wompi | $10,900 | monthly | premium_monthly_wompi |
+| Fleet Mensual | Wompi | $9,900 | monthly | fleet_monthly_wompi |
+
+**Self-Service:**
+- Google Play: maneja upgrade/downgrade, cancelación, historial nativamente
+- Wompi: cancelación al final del período vía `subscriptions.cancel_at_period_end`
+- Dashboard: vista de plan actual, estado, fechas de billing
 
 ---
 
@@ -460,7 +587,7 @@ CREATE TABLE organizations (
   name TEXT NOT NULL,
   slug TEXT UNIQUE NOT NULL, -- para URLs amigables
   plan TEXT DEFAULT 'free', -- free, per_event, premium, fleet
-  stripe_customer_id TEXT,
+  external_customer_id TEXT, -- Google Play / Wompi customer reference
   settings JSONB DEFAULT '{}', -- config global: geofence_defaults, fatigue_thresholds
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -516,14 +643,15 @@ CREATE POLICY "org_isolation" ON incidents
 
 **Flujo Onboarding Fleet (Dashboard Web):**
 ```
-1. Admin registra empresa → Crea organization + owner member
-2. Verificación email → Stripe Customer creado automáticamente
-3. Admin invita conductores (email/SMS) → organization_members (pending)
-4. Conductor acepta → Descarga app → Login → Auto-vincula a org
-5. Admin registra vehículos → Asigna conductor + dongle OBD (opcional)
-6. Admin define geofences → Configura toggles por vehículo
-7. Facturación: Admin ve Billing Dashboard → Selecciona plan Fleet
-8. Checkout Stripe → Webhook → Sync Engine → org.plan = 'fleet'
+1. Admin registra empresa → Crea organization + owner member (Supabase Auth)
+2. Verificación email → Profile creado automáticamente (trigger on_auth_user_created)
+3. Admin invita conductores (email/SMS vía OneSignal/Email) → organization_members (pending)
+4. Conductor acepta → Descarga app → Login Supabase Auth → Auto-vincula a org
+5. Conductor toma selfie en app → embedding facial → sync a drivers.face_embedding
+6. Admin registra vehículos (placa, marca, modelo) → Asigna conductor + dongle OBD (opcional)
+7. Admin define geofences (radio, ubicación) → Configura toggles por vehículo
+8. Facturación: Admin ve Billing Dashboard → Selecciona plan Fleet
+9. Checkout Wompi (web) o Google Play (app) → Webhook → org.plan = 'fleet'
 ```
 
 **Dashboard Web - Organization Selector:**
@@ -785,22 +913,22 @@ CREATE TABLE maintenance_alerts (
 
 **Billing Dashboard (gestión de suscripciones):**
 - Vista: plan actual, próximo cobro, método de pago, uso (minutos Mux, eventos)
-- Botón "Gestionar suscripción" → abre Stripe Customer Portal (self-service)
+- Botón "Gestionar suscripción" → abre Portal de auto-servicio (Google Play o Wompi)
 - Upgrade/downgrade de plan por vehículo
-- Historial de facturas con link de descarga PDF (Stripe hosted invoice)
+- Historial de facturas con link de descarga PDF
 - Límite de eventos en plan "Por Evento": counter visible + alerta al acercarse al límite
 
 **Fleet Onboarding Flow (flujo de configuración):**
 ```
 1. Admin registra empresa → Crea organization + owner member (Supabase Auth)
-2. Verificación email → Stripe Customer creado automáticamente (Sync Engine)
+2. Verificación email → Profile creado automáticamente (trigger on_auth_user_created)
 3. Admin invita conductores (email/SMS vía OneSignal/Email) → organization_members (pending)
 4. Conductor acepta → Descarga app → Login Supabase Auth → Auto-vincula a org
 5. Conductor toma selfie en app → embedding facial → sync a drivers.face_embedding
 6. Admin registra vehículos (placa, marca, modelo) → Asigna conductor + dongle OBD (opcional)
 7. Admin define geofences (radio, ubicación) → Configura toggles por vehículo
 8. Facturación: Admin ve Billing Dashboard → Selecciona plan Fleet
-9. Checkout Stripe → Webhook → Sync Engine → org.plan = 'fleet'
+9. Checkout Wompi (web) o Google Play (app) → Webhook → org.plan = 'fleet'
 ```
 
 ### 6.8 Anti-somnolencia + Wearables (El Copiloto)
@@ -1046,7 +1174,7 @@ Datos guardados: vehicle_id, org_id, fence_id, event_type ('enter'|'exit'), loca
 | 10 | Servicio de instalación OBD Asistida | ❌ No | ❌ No | 💰 Pago único ($39.900 COP) | 💰 Pago único ($39.900 COP) o incluido en contrato anual. |
 | 11 | Detección de Colisión + Llamada automática (Twilio) | ❌ No | ❌ No | ✅ Sí. Filtro >40km/h, sube video automáticamente, llama al usuario, notifica a contacto de emergencia. | ✅ Sí. Mismo que Premium + Admin recibe alerta en tiempo real en Dashboard. |
 | 12 | Dashboard Web (Administración) | ❌ No | ❌ No | ❌ No | ✅ Sí. Mapa en vivo, gestión de vehículos/conductores, toggles on/off por vehículo, exportación de reportes (CSV), historial de incidentes. |
-| 13 | Billing Dashboard (Gestión de Suscripciones) | ❌ No | ❌ No | ❌ No | ✅ Sí. Plan actual, upgrade/downgrade, historial facturas, Stripe Portal self-service. |
+| 13 | Billing Dashboard (Gestión de Suscripciones) | ❌ No | ❌ No | ❌ No | ✅ Sí. Plan actual, upgrade/downgrade, historial facturas, Portal self-service (Google Play/Wompi). |
 | 14 | Modo Offline (GPS/logs sin internet) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
 | 15 | Limpieza automática de videos (7 días) | ✅ Sí | ✅ Sí | ✅ Sí | ✅ Sí |
 
@@ -1175,7 +1303,7 @@ Datos guardados: vehicle_id, org_id, fence_id, event_type ('enter'|'exit'), loca
 | **Costo de Twilio por llamada** | Baja | Medio | Solo en colisiones graves; incluido en precio Fleet |
 | **Resistencia de conductores a ser monitoreados** | Media | Alto | Facial off por defecto; enfoque en seguridad, no castigo |
 | **Dependencia de Supabase** | Baja | Medio | Open source, self-hostable, arquitectura permite migrar si es necesario |
-| **Vendor lock-in Stripe** | Baja | Medio | Sync Engine mantiene datos en Postgres; migración posible con esfuerzo |
+| **Vendor lock-in Wompi/Google Play** | Baja | Medio | Datos de billing en Supabase Postgres; migración posible con esfuerzo |
 | **Costos Mux a escala** | Media | Medio | Monitorear usage; evaluar Cloudflare Stream como alternativa si supera $200/mes |
 | **Límites OneSignal (10k free)** | Baja | Medio | Migración a FCM/APNs directo o plan pagado OneSignal al crecer |
 | **Fuga de datos multi-tenancy** | Baja | Muy Alto | RLS policies exhaustivas, tests de aislamiento, auditoría periódica |
@@ -1407,7 +1535,7 @@ FatigueScreen.kt:
 7. **Sugerencia de wearables compatibles**: mejora UX cuando el hardware es limitado.
 8. **Supabase como backend principal**: PostgreSQL open source, realtime nativo, Auth, Storage, Edge Functions, sin vendor lock-in, self-hostable.
 9. **Mux para video processing**: partner oficial Supabase, transcodificación HLS/DASH, CDN global, free tier generoso para MVP.
-10. **Stripe + Supabase Stripe Sync Engine para pagos**: Checkout, Portal, Subscriptions, Webhooks, sincronización automática a Postgres.
+10. **Google Play Billing + Wompi para pagos**: Pagos en app vía Google Play, pagos web vía Wompi (pasarela colombiana), sin dependencia de Stripe.
 11. **OneSignal para push notifications (MVP)**: gratis hasta 10k usuarios, cross-platform, fácil integración.
 12. **Multi-tenancy con Organizations + RLS**: aislamiento de datos por empresa, invitaciones, selector de organización en Dashboard.
 13. **Facial solo alerta, nunca bloqueo**: cumple regulaciones y expectativas del usuario.
@@ -1432,7 +1560,7 @@ FatigueScreen.kt:
 
 | Capa | Herramienta | Cobertura Objetivo | Ejecución |
 |------|-------------|-------------------|-----------|
-| **Unit Tests (Kotlin)** | JUnit5 + MockK | >80% código nativo (cámara, sensores, buffer) | Cada PR (CI) |
+| **Unit Tests (Kotlin)** | JUnit5 + MockK | >80% código nativo (cámara, sensores, buffer). Tests parciales existentes (auth, engine, platform utils). | Cada PR (CI) |
 | **Integration Tests** | Supabase Local + Testcontainers | Endpoints Edge Functions, RLS policies, sync | Semanal (CI) |
 | **UI Tests** | Compose Testing + Espresso | Flujos críticos: monitor, fatigue, event save | Pre-release |
 | **E2E Tests** | Maestro (mobile) + Playwright (dashboard) | Flujo completo: auto-start → evento → sync → dashboard | Pre-release |
@@ -1445,7 +1573,12 @@ FatigueScreen.kt:
 - Buffer circular: guardado de video tras evento
 - Foreground Service: supervivencia 2h+ en background
 - Supabase Auth: login, roles, RLS
-- Stripe: checkout flow, webhook processing
+- Google Play Billing / Wompi: checkout flow, webhook processing
+
+**Ya implementados (unit tests):**
+- Auth logic (login, signup, confirmation) — `e604ea3`
+- Engine logic (buffer circular, state management) — `e604ea3`
+- Platform utilities (NumberFormat, etc.) — `e604ea3`
 
 **Important (deben pasar antes de beta):**
 - Health Connect: lectura FC/HRV con 3+ wearables
@@ -1495,7 +1628,7 @@ Vercel (auto-deploy):
 ├── Env vars:
 │   ├── VITE_SUPABASE_URL
 │   ├── VITE_SUPABASE_ANON_KEY
-│   ├── VITE_STRIPE_PUBLISHABLE_KEY
+│   ├── VITE_WOMPI_PUBLIC_KEY
 │   └── VITE_MUX_ENV_KEY
 ├── Branch previews: PR automático
 └── Production: merge a main
@@ -1594,7 +1727,7 @@ CREATE INDEX idx_events_log_org ON events_log(org_id);
 - Database connection pool usage
 - Storage bandwidth (Supabase Storage)
 - Mux encoding minutes consumed
-- Stripe subscription changes
+- Wompi subscription changes
 
 ### Alertas Críticas
 
@@ -1657,15 +1790,15 @@ Cualquier dongle ELM327 Bluetooth estándar funciona (costo $10-$15 USD). Recome
 Cuando ocurre un evento (colisión, botón pánico), el video se sube a Supabase Storage. Una Edge Function dispara la transcodificación en Mux (HLS/DASH, CDN global). El Dashboard reproduce via Mux Player. Free tier: 100 min encoding/mes, 500 min streaming/mes.
 
 ### 9. ¿Cómo funcionan los pagos?
-Stripe maneja checkout y suscripciones. Supabase Stripe Sync Engine sincroniza customers, subscriptions, invoices a Postgres automáticamente. El Dashboard lee estado de suscripción desde Postgres (realtime). Customer Portal para self-service.
+Google Play Billing maneja checkout y suscripciones desde la app Android. Wompi (pasarela colombiana) maneja pagos web desde el Dashboard Fleet. Ambos canales crean registros en tablas `purchases` y `subscriptions` en Supabase. El Dashboard lee estado de suscripción desde Postgres (realtime).
 
 ### 10. ¿Qué pasa con mis datos si quiero irme?
-Supabase es open source (PostgreSQL). Puedes exportar tu DB, self-hostear Supabase, o migrar a otro Postgres. Los videos en Mux son tuyos (puedes descargar assets). Stripe Sync Engine mantiene tus datos de facturación en tu DB.
+Supabase es open source (PostgreSQL). Puedes exportar tu DB, self-hostear Supabase, o migrar a otro Postgres. Los videos en Mux son tuyos (puedes descargar assets). Datos de billing se mantienen en tu DB de Supabase.
 
 ---
 
-**Documento versión**: 2.1
-**Última actualización**: Junio 27, 2026
+**Documento versión**: 3.1
+**Última actualización**: Julio 2, 2026
 **Siguiente review**: Julio 2026
 
 **Contactar**: [Oscar's info aquí]

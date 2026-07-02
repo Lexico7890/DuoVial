@@ -1,6 +1,6 @@
 # TICKETS DE DESARROLLO — DuoVial MVP
 
-**Versión**: 3.0 | **Fecha**: Junio 30, 2026
+**Versión**: 3.1 | **Fecha**: Julio 2, 2026
 **Repositorio**: `C:\Users\camip\Desktop\ocdev\DuoVial`
 **Convención**: `[FASE]-[ID]` — Ej: `A-01`, `C-03`, `G-01`
 
@@ -27,11 +27,13 @@
 | 13 | Offline sync strategy (6.9) | Módulo 6.9 | **SIN TICKET** |
 | 14 | Legal & Compliance | Sección Legal | **SIN TICKET** |
 | 15 | Monitoring & Observability | Sección Monitoring | **SIN TICKET** |
-| 16 | Auto-Inicio por Actividad (6.6) | Módulo 6.6 | **SIN TICKET** |
+| 16 | Auto-Inicio por Actividad (6.6) | Módulo 6.6 | **SIN TICKET** (H-04 — diferente a A-10) |
 | 17 | Supabase Edge Functions | Arquitectura | **SIN TICKET** |
 | 18 | Supabase Realtime | Arquitectura | **SIN TICKET** |
 | 19 | Configurar umbral G-Force desde UI | Especificaciones | **SIN TICKET** |
 | 20 | Configurar umbrales de fatiga desde UI | Especificaciones | **SIN TICKET** |
+| 21 | Auto-inicio del Vigilante a 30 km/h | FASE_A (sección G) | **CON TICKET** (A-10) |
+| 22 | Borrado automático de videos >72 horas | FASE_A (sección H) | **CON TICKET** (A-11) |
 
 ### Tickets existentes que necesitan MODIFICACIÓN
 
@@ -74,6 +76,8 @@
 | 13 | **G-05** | Configurar umbral G-Force desde UI | A-02 |
 | 14 | A-03 | Stress test buffer circular >4h | A-02, A-04 |
 | 15 | A-05 | Reparar EventsScreen con lista real | A-02 |
+| 16 | **A-10** | Auto-inicio del Vigilante a 30 km/h | Ninguna |
+| 17 | **A-11** | Borrado automático de videos >72 horas | Ninguna |
 
 ### Fase B: Onboarding y UX (Semana 7-8)
 > **Primera impresión del usuario.** Permisos y onboarding.
@@ -158,7 +162,7 @@
 | Sprint | Fase | Tickets | Prioridad | Puntos |
 |--------|------|---------|-----------|--------|
 | 1-2 | G: Infraestructura | G-01 → G-06 | P0 | 21 |
-| 3-6 | A: Estabilidad | A-01 → A-09 + G-05 | P0-P1 | 35 |
+| 3-6 | A: Estabilidad | A-01 → A-11 + G-05 | P0-P1 | 42 |
 | 7-8 | B: Onboarding/UX | B-01 → B-03 | P1 | 13 |
 | 9-12 | C: Supabase | C-01 → C-06 | P1 | 30 |
 | 13-16 | D: Anti-Somnolencia | D-01 → D-06 + G-06 | P1-P2 | 33 |
@@ -415,7 +419,108 @@ Agregar controles en Settings/FatigueScreen para configurar: closed eye threshol
 - **A-02**: Se mantiene tal cual. La refactorización a 3 videos es crítica.
 - **A-08**: Se mantiene. La configuración de post-evento es necesaria antes de G-05.
 - **A-05**: Después de completar, integrar con B-03 (reproductor de video).
-- **Nuevo orden**: A-01 → A-02 → A-09 → A-06 → A-04 → A-08 → A-07 → G-05 → A-03 → A-05.
+- **Nuevo orden**: A-01 → A-02 → A-09 → A-06 → A-04 → A-08 → A-07 → G-05 → A-03 → A-05 → A-10 → A-11.
+
+---
+
+## A-10 — Auto-inicio del Vigilante a 30 km/h
+
+| Campo | Valor |
+|-------|-------|
+| **Tipo** | Feature |
+| **Prioridad** | P1 |
+| **Dependencias** | Ninguna |
+| **Archivos afectados** | `BackgroundCameraService.kt`, `SettingsScreen.kt`, `SettingsManager.kt`, `SettingsManagerAndroid.kt`, `CameraServiceManager.kt`, `CameraServiceManagerAndroid.kt`, `NotificationHelper.kt` |
+| **Estimación** | 5 puntos |
+
+### Descripción
+
+Implementar auto-inicio del Vigilante cuando el velocímetro alcanza 30 km/h. La funcionalidad debe ser configurable desde SettingsScreen (toggle, deshabilitado por defecto). Cuando se activa, el servicio envía una notificación de advertencia con 5 segundos de delay y un botón para cancelar. Si el usuario no cancela, el Vigilante cambia a modo RECORDING automáticamente.
+
+### Criterios de Aceptación
+
+- **Dado** que el usuario habilitó "Auto-inicio" en Settings
+  **Cuando** el velocímetro marca 30 km/h y el servicio está en STANDBY
+  **Entonces** aparece una notificación: "DuoVial se activará en 5 segundos. Toca para cancelar."
+
+- **Dado** que la notificación de auto-inicio apareció
+  **Cuando** el usuario toca "CANCELAR" antes de 5 segundos
+  **Entonces** el auto-inicio se cancela y el servicio permanece en STANDBY.
+
+- **Dado** que la notificación de auto-inicio apareció
+  **Cuando** pasan 5 segundos sin que el usuario cancele
+  **Entonces** el servicio cambia a modo RECORDING y la burbuja flotante aparece (si el permiso está concedido).
+
+- **Dado** que el auto-inicio se activó
+  **Cuando** el usuario detiene manualmente el Vigilante
+  **Entonces** el auto-inicio se desactiva temporalmente hasta que la velocidad baje de 10 km/h.
+
+- **Dado** que el usuario deshabilitó "Auto-inicio" en Settings
+  **Cuando** el velocímetro marca 30 km/h
+  **Entonces** no ocurre nada — el servicio permanece en STANDBY.
+
+### Notas Técnicas
+
+- Agregar `autoStartEnabled` a `SettingsManager` (SharedPreferences, default `false`).
+- Agregar `ACTION_CANCEL_AUTO_START` al companion object de `BackgroundCameraService`.
+- Usar `Handler.postDelayed` con 5 segundos de delay para el auto-inicio.
+- Cooldown de 10 minutos entre auto-inicios para evitar activaciones repetidas en tráfico urbano.
+- La notificación debe tener un botón "CANCELAR" con `PendingIntent` que envíe `ACTION_CANCEL_AUTO_START`.
+- El GPS ya monitorea velocidad en `locationListener` — solo se agrega lógica de comparación.
+- Impacto en rendimiento: negligible (una comparación numérica adicional).
+
+### Documentación de Referencia
+
+Ver `FASE_A_Implementation.md`, sección 9: "G: Auto-Inicio del Vigilante a 30 km/h".
+
+---
+
+## A-11 — Borrado automático de videos mayores a 72 horas
+
+| Campo | Valor |
+|-------|-------|
+| **Tipo** | Feature / Chore |
+| **Prioridad** | P1 |
+| **Dependencias** | Ninguna |
+| **Archivos afectados** | `IncidentRepository.kt`, `MainActivity.kt` |
+| **Estimación** | 2 puntos |
+
+### Descripción
+
+Implementar borrado automático de videos de incidentes que tengan más de 72 horas de antigüedad. La limpieza se ejecuta silenciosamente al abrir la app (en `MainActivity.onCreate()`) y no es configurable por el usuario. Los videos se eliminan de MediaStore usando la columna `DATE_ADDED`.
+
+### Criterios de Aceptación
+
+- **Dado** que existen videos de incidentes en Downloads/DuoVial
+  **Cuando** el usuario abre la app y hay videos con más de 72 horas de antigüedad
+  **Entonces** los videos antiguos se eliminan automáticamente sin notificación al usuario.
+
+- **Dado** que existen videos de incidentes con menos de 72 horas
+  **Cuando** el usuario abre la app
+  **Entonces** los videos recientes NO se eliminan.
+
+- **Dado** que no hay videos antiguos
+  **Cuando** el usuario abre la app
+  **Entonces** la limpieza se ejecuta sin errores (no hace nada si no hay nada que borrar).
+
+- **Dado** que la limpieza eliminó archivos
+  **Cuando** se revisa el log
+  **Entonces** se registra cuántos archivos se eliminaron.
+
+### Notas Técnicas
+
+- Agregar constante `MAX_INCIDENT_AGE_MS = 72 * 60 * 60 * 1000L` en `IncidentRepository`.
+- Agregar función `cleanupOldIncidents(context: Context): Int` en `IncidentRepository`.
+- La función consulta MediaStore con la misma query que `scanIncidents()` pero seleccionando `DATE_ADDED`.
+- Para cada resultado, calcula antigüedad: `System.currentTimeMillis() - (DATE_ADDED * 1000L)`.
+- Si antigüedad > 72 horas, elimina con `contentResolver.delete(uri, null, null)`.
+- Ejecutar en `MainActivity.onCreate()` en un coroutine en `Dispatchers.IO`.
+- No requiere permisos adicionales en Android 10+ (scoped storage permite eliminar archivos propios).
+- Impacto en rendimiento: negligible (consulta MediaStore + I/O de disco, una sola vez al abrir la app).
+
+### Documentación de Referencia
+
+Ver `FASE_A_Implementation.md`, sección 10: "H: Borrado Automático de Videos Mayores a 72 Horas".
 
 ---
 

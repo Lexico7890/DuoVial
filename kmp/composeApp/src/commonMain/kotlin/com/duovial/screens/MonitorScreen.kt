@@ -48,6 +48,7 @@ import com.duovial.theme.DuoVialBorder
 import com.duovial.theme.DuoVialCardBackground
 import com.duovial.theme.DuoVialNeonGreen
 import com.duovial.theme.DuoVialNeonRed
+import com.duovial.theme.DuoVialOrange
 import com.duovial.theme.DuoVialTextPrimary
 import com.duovial.theme.DuoVialTextSecondary
 import duovialkmp.composeapp.generated.resources.Res
@@ -84,6 +85,12 @@ fun MonitorScreen(
         gForce >= 2.0 -> DuoVialAmber
         else -> DuoVialNeonGreen
     }
+    val temperature = cameraState.temperature
+    val temperatureColor = when {
+        temperature >= 45f -> DuoVialNeonRed
+        temperature >= 30f -> DuoVialAmber
+        else -> Color.White.copy(alpha = 0.7f)
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(DuoVialBackground)) {
 
@@ -113,7 +120,7 @@ fun MonitorScreen(
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .padding(start = 16.dp, end = 16.dp, top = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Box(
@@ -144,7 +151,9 @@ fun MonitorScreen(
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color.Black.copy(alpha = 0.6f))
                         .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .height(56.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
@@ -164,25 +173,46 @@ fun MonitorScreen(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
-                    contentAlignment = Alignment.Center
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "KPH",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                text = "$speedKph",
+                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
+                                color = DuoVialTextPrimary,
+                                fontWeight = FontWeight.W900
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            text = "KPH",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                        Text(
-                            text = "$speedKph",
-                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
-                            color = DuoVialTextPrimary,
-                            fontWeight = FontWeight.W900
+                            text = "${temperature.toInt()}°",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = temperatureColor,
+                            fontWeight = FontWeight.W700
                         )
                     }
                 }

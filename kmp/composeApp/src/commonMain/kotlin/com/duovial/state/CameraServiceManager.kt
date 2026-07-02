@@ -15,6 +15,10 @@ interface CameraServiceManager {
     fun snoozeFatigueAlert(minutes: Int)
     fun getFatigueStatus(): FatigueConfig
     fun requestOverlayPermission()
+    fun getTemperature(): Float
+    fun setAutoStartEnabled(enabled: Boolean)
+    fun isAutoStartEnabled(): Boolean
+    fun cancelAutoStart()
 
     fun loadIncidents(): List<Incident>
 

@@ -91,6 +91,7 @@ class BackgroundCameraService : LifecycleService() {
     private val maxCameraInitAttempts = 3
     private var hasCompletedSegment0 = false
     private var hasCompletedSegment1 = false
+    @Volatile private var isDestroyed = false
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -134,6 +135,11 @@ class BackgroundCameraService : LifecycleService() {
     private var hourResetTime: Long = 0L
     @Volatile private var currentEar: Double = 0.0
     @Volatile private var currentFaceDetected: Boolean = false
+    private var temperatureCheckRunnable: Runnable? = null
+    @Volatile private var autoStartEnabled: Boolean = false
+    @Volatile private var autoStartPending: Boolean = false
+    private var autoStartRunnable: Runnable? = null
+    private var lastAutoStartActivationTime: Long = 0L
 
     companion object {
         var instance: BackgroundCameraService? = null
@@ -149,9 +155,12 @@ class BackgroundCameraService : LifecycleService() {
         @Volatile var pendingFatigueEnabled: Boolean? = null
         @Volatile var activeFrontPreviewView: PreviewView? = null
         @Volatile var pendingFrontPreviewView: PreviewView? = null
+        @Volatile var bubbleActive: Boolean = false
 
         internal fun markServiceStarting() { serviceStarting = true }
         internal fun clearServiceStarting() { serviceStarting = false }
+
+        const val MIN_SPEED_FOR_EVENT_KMH = 30.0
 
         const val ACTION_START_STANDBY = "ACTION_START_STANDBY"
         const val ACTION_START_RECORDING = "ACTION_START_RECORDING"
@@ -165,15 +174,29 @@ class BackgroundCameraService : LifecycleService() {
         const val ACTION_SET_DURATION_THRESHOLD = "ACTION_SET_DURATION_THRESHOLD"
         const val ACTION_SET_MAX_ALERTS = "ACTION_SET_MAX_ALERTS"
         const val ACTION_SNOOZE_FATIGUE = "ACTION_SNOOZE_FATIGUE"
+        const val ACTION_NOTIFICATION_EVENT = "ACTION_NOTIFICATION_EVENT"
+        const val ACTION_NOTIFICATION_STOP = "ACTION_NOTIFICATION_STOP"
+        const val ACTION_TEMPERATURE_STOPPED = "ACTION_TEMPERATURE_STOPPED"
+        const val ACTION_CANCEL_AUTO_START = "ACTION_CANCEL_AUTO_START"
+        
+        const val AUTO_START_COOLDOWN_MS = 10 * 60 * 1000L // 10 minutos
+        const val AUTO_START_DELAY_MS = 5000L // 5 segundos
+        
+        const val TEMP_WARNING_CELSIUS = 40.0
+        const val TEMP_DANGER_CELSIUS = 45.0
+        const val TEMP_CRITICAL_CELSIUS = 50.0
+        const val TEMP_RECOVERY_CELSIUS = 45.0
     }
 
     private val rotateRunnable = Runnable {
-        Log.d(TAG, "Rotando buffer circular...")
+        if (isDestroyed) return@Runnable
+        Log.v(TAG, "Rotando buffer circular...")
         rotateCircularBuffer()
     }
 
     private val stopPostEventRunnable = Runnable {
-        Log.d(TAG, "Deteniendo grabacion de post-evento...")
+        if (isDestroyed) return@Runnable
+        Log.v(TAG, "Deteniendo grabacion de post-evento...")
         currentActiveRecording?.stop()
     }
 
@@ -192,7 +215,12 @@ class BackgroundCameraService : LifecycleService() {
                     statusListener?.onAccelChanged(gForce)
                 }
                 if (gForce > gForceThreshold) {
-                    triggerCollisionEvent("Acelerometro Impacto Detectado: ${String.format("%.2f", gForce)} G")
+                    if (lastKnownSpeed < 0 || lastKnownSpeed >= MIN_SPEED_FOR_EVENT_KMH) {
+                        Log.i(TAG, "Evento de acelerometro DISPARADO: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
+                        triggerCollisionEvent("Acelerometro Impacto Detectado: ${String.format("%.2f", gForce)} G")
+                    } else {
+                        Log.v(TAG, "Evento de acelerometro DESCARTADO por velocidad: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h (min: ${MIN_SPEED_FOR_EVENT_KMH} km/h)")
+                    }
                 }
             }
         }
@@ -206,6 +234,7 @@ class BackgroundCameraService : LifecycleService() {
             val rawKph = location.speed * 3.6
             lastKnownSpeed = lastKnownSpeed * 0.6 + rawKph * 0.4
             statusListener?.onSpeedChanged(lastKnownSpeed)
+            checkAutoStart()
         }
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         override fun onProviderEnabled(provider: String) {}
@@ -214,7 +243,7 @@ class BackgroundCameraService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Creando servicio de camara...")
+        Log.v(TAG, "Creando servicio de camara...")
         instance = this
         clearServiceStarting()
 
@@ -248,15 +277,11 @@ class BackgroundCameraService : LifecycleService() {
         startServiceNotification()
         startCameraX()
         startLocationUpdates()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
-            showFloatingBubble()
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        Log.d(TAG, "Servicio iniciado con action: ${intent?.action}")
+        Log.v(TAG, "Servicio iniciado con action: ${intent?.action}")
         if (intent != null) {
             when (intent.action) {
                 ACTION_START_STANDBY -> startStandbyMode()
@@ -288,25 +313,33 @@ class BackgroundCameraService : LifecycleService() {
                     val minutes = intent.getIntExtra("minutes", 5)
                     snoozeFatigueAlert(minutes)
                 }
+                ACTION_NOTIFICATION_EVENT -> triggerCollisionEvent("Boton de Pantalla de Bloqueo")
+                ACTION_NOTIFICATION_STOP -> stopAndSaveBuffer()
+                ACTION_CANCEL_AUTO_START -> cancelAutoStart()
             }
         } else {
             startStandbyMode()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "Destruyendo servicio de camara...")
+        Log.v(TAG, "Destruyendo servicio de camara...")
+        isDestroyed = true
         instance = null
         stopCircularBufferTimers()
         stopSensors()
         stopFatigueDetection()
         stopLocationUpdates()
         removeFloatingBubble()
+        stopTemperatureMonitoring()
         currentActiveRecording?.stop()
         currentActiveRecording = null
         activePreview?.setSurfaceProvider(null)
         activePreview = null
+        activePreviewView = null
+        pendingPreviewView = null
+        pendingFrontPreviewView = null
         cameraProvider?.unbindAll()
         cameraLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
         facialLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
@@ -325,7 +358,7 @@ class BackgroundCameraService : LifecycleService() {
         handler.post {
             try {
                 preview.setSurfaceProvider(previewView.surfaceProvider)
-                Log.d(TAG, "SurfaceProvider asociado con exito.")
+                Log.v(TAG, "SurfaceProvider asociado con exito.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error al asociar SurfaceProvider: ${e.message}")
             }
@@ -339,7 +372,7 @@ class BackgroundCameraService : LifecycleService() {
         try {
             preview.setSurfaceProvider(view.surfaceProvider)
             activePreviewView = view
-            Log.d(TAG, "Pending preview vaciado con exito.")
+            Log.v(TAG, "Pending preview vaciado con exito.")
         } catch (e: Exception) {
             Log.e(TAG, "Error vaciando pending preview: ${e.message}")
         } finally {
@@ -353,7 +386,7 @@ class BackgroundCameraService : LifecycleService() {
         handler.post {
             try {
                 preview.setSurfaceProvider(null)
-                Log.d(TAG, "SurfaceProvider desasociado.")
+                Log.v(TAG, "SurfaceProvider desasociado.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error al desasociar SurfaceProvider: ${e.message}")
             }
@@ -369,9 +402,11 @@ class BackgroundCameraService : LifecycleService() {
         isStoppingService = false
         stopCircularBufferTimers()
         stopSensors()
+        stopTemperatureMonitoring()
+        removeFloatingBubble()
         currentActiveRecording?.stop()
         currentActiveRecording = null
-        updateNotification("DuoVial", "Camara lista.")
+        updateNotification("DuoVial", "Camara lista.", showActions = false)
         sendStatusUpdate("INACTIVO")
     }
 
@@ -387,7 +422,7 @@ class BackgroundCameraService : LifecycleService() {
         hasCompletedSegment0 = false
         hasCompletedSegment1 = false
         serviceState = ServiceState.STANDBY
-        updateNotification("DuoVial", "Camara lista.")
+        updateNotification("DuoVial", "Camara lista.", showActions = false)
         sendStatusUpdate("INACTIVO")
         Log.i(TAG, "Force reset completo. Servicio en STANDBY.")
     }
@@ -403,14 +438,24 @@ class BackgroundCameraService : LifecycleService() {
 
     fun startRecordingMode() {
         if (serviceState == ServiceState.RECORDING) {
-            Log.d(TAG, "El servicio ya esta en modo RECORDING. Re-emitiendo estado para sincronizar JS.")
+            Log.v(TAG, "El servicio ya esta en modo RECORDING. Re-emitiendo estado para sincronizar JS.")
             sendStatusUpdate("DUOVIAL ACTIVO")
+            return
+        }
+        val temp = getDeviceTemperature()
+        if (temp >= TEMP_CRITICAL_CELSIUS) {
+            Log.w(TAG, "No se puede iniciar Vigilante: temperatura critica ($temp°C)")
+            sendStatusUpdate("ERROR EN CAMARA")
             return
         }
         Log.i(TAG, "Cambiando a modo RECORDING...")
         serviceState = ServiceState.RECORDING
-        updateNotification("DuoVial - Vigilando", "Grabacion circular activa en segundo plano.")
+        updateNotification("DuoVial - Vigilando", "Grabacion circular activa en segundo plano.", showActions = true)
         startSensors()
+        startTemperatureMonitoring()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            showFloatingBubble()
+        }
         if (cameraReady) {
             startCircularBuffer()
         } else {
@@ -431,7 +476,7 @@ class BackgroundCameraService : LifecycleService() {
         if (facial != null && faceProcessor?.isActive == true) {
             try {
                 facial.start(facialLifecycleOwner, previewView)
-                Log.d(TAG, "Front PreviewView vinculado en caliente a FatigueCameraManager.")
+                Log.v(TAG, "Front PreviewView vinculado en caliente a FatigueCameraManager.")
             } catch (e: Exception) {
                 Log.e(TAG, "Error al vincular front PreviewView: ${e.message}")
             }
@@ -452,7 +497,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun sendStatusUpdate(status: String) {
         statusListener?.onStatusChanged(status)
-        Log.d(TAG, "Estado actualizado: $status")
+        Log.v(TAG, "Estado actualizado: $status")
     }
 
     // ==========================================
@@ -471,6 +516,7 @@ class BackgroundCameraService : LifecycleService() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -486,19 +532,37 @@ class BackgroundCameraService : LifecycleService() {
         }
     }
 
-    private fun updateNotification(title: String, text: String) {
+    private fun updateNotification(title: String, text: String, showActions: Boolean = false) {
         val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
         val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.presence_video_online)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
+        
+        if (showActions) {
+            val eventIntent = Intent(this, BackgroundCameraService::class.java).apply {
+                action = ACTION_NOTIFICATION_EVENT
+            }
+            val eventPendingIntent = PendingIntent.getService(this, 1, eventIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(0, "REGISTRAR EVENTO", eventPendingIntent)
+            
+            val stopIntent = Intent(this, BackgroundCameraService::class.java).apply {
+                action = ACTION_NOTIFICATION_STOP
+            }
+            val stopPendingIntent = PendingIntent.getService(this, 2, stopIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(0, "DETENER", stopPendingIntent)
+        }
+        
+        val notification = builder.build()
         val manager = getSystemService(NotificationManager::class.java)
         manager?.notify(NOTIFICATION_ID, notification)
     }
@@ -523,17 +587,25 @@ class BackgroundCameraService : LifecycleService() {
         cameraProviderFuture.addListener({
             try {
                 cameraProvider = cameraProviderFuture.get()
+                val qualitySelector = try {
+                    QualitySelector.from(Quality.HD)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Quality.HD no soportado, usando Fallback a SD")
+                    QualitySelector.from(Quality.SD)
+                }
                 val recorder = Recorder.Builder()
-                    .setQualitySelector(QualitySelector.from(Quality.HD))
+                    .setQualitySelector(qualitySelector)
                     .build()
                 videoCapture = VideoCapture.withOutput(recorder)
+                // I7: Audio desactivado explícitamente con withAudioEnabled(false)
+                // I8: Bitrate manejado por QualitySelector (Quality.HD ~2-3 Mbps nativo de CameraX)
                 val preview = Preview.Builder().build()
                 activePreview = preview
                 val activeView = activePreviewView
                 if (activeView != null) {
                     try {
                         preview.setSurfaceProvider(activeView.surfaceProvider)
-                        Log.d(TAG, "PreviewView vinculado con exito en startCameraX.")
+                        Log.v(TAG, "PreviewView vinculado con exito en startCameraX.")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error al vincular vista: ${e.message}")
                     }
@@ -543,14 +615,14 @@ class BackgroundCameraService : LifecycleService() {
                 cameraLifecycleOwner.registry.currentState = Lifecycle.State.STARTED
                 cameraLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED
                 cameraProvider?.bindToLifecycle(cameraLifecycleOwner, cameraSelector, preview, videoCapture)
-                Log.d(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
+                Log.v(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
                 cameraReady = true
                 flushPendingPreview()
                 handler.postDelayed({
                     val view = activePreviewView
                     if (view != null && activePreview != null) {
                         activePreview?.setSurfaceProvider(view.surfaceProvider)
-                        Log.d(TAG, "Surface provider re-aplicado con retraso de seguridad (500ms).")
+                        Log.v(TAG, "Surface provider re-aplicado con retraso de seguridad (500ms).")
                     }
                 }, 500)
                 if (serviceState == ServiceState.RECORDING) {
@@ -584,7 +656,7 @@ class BackgroundCameraService : LifecycleService() {
             if (f1.exists()) f1.delete()
             val fPost = File(cacheDir, "segment_post.mp4")
             if (fPost.exists()) fPost.delete()
-            Log.d(TAG, "Cache de segmentos de video limpiada con exito.")
+            Log.v(TAG, "Cache de segmentos de video limpiada con exito.")
         } catch (e: Exception) {
             Log.e(TAG, "Error al limpiar cache de segmentos: ${e.message}")
         }
@@ -599,17 +671,18 @@ class BackgroundCameraService : LifecycleService() {
         if (segmentFile.exists()) segmentFile.delete()
         val fileOutputOptions = FileOutputOptions.Builder(segmentFile).build()
         try {
+            // Audio desactivado por defecto en CameraX (no se llama a withAudioEnabled)
             val pendingRecording = videoCapture!!.output.prepareRecording(this, fileOutputOptions)
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Start) {
-                    Log.d(TAG, "Grabacion de segmento_$index iniciada con exito.")
+                    Log.v(TAG, "Grabacion de segmento_$index iniciada con exito.")
                     if (!isSavingEvent) sendStatusUpdate("DUOVIAL ACTIVO")
                 } else if (event is VideoRecordEvent.Finalize) {
                     onRecordingFinalized(event)
                 }
             }
             recordingStartTime = System.currentTimeMillis()
-            Log.d(TAG, "Grabando segmento_$index en cache...")
+            Log.v(TAG, "Grabando segmento_$index en cache...")
             handler.postDelayed(rotateRunnable, 15000)
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar grabacion: ${e.message}")
@@ -623,7 +696,7 @@ class BackgroundCameraService : LifecycleService() {
         if (event.hasError()) {
             Log.e(TAG, "Grabacion finalizada con error: Codigo ${event.error}, Causa: ${event.cause?.message}")
         } else {
-            Log.d(TAG, "Grabacion de segmento finalizada con exito.")
+            Log.v(TAG, "Grabacion de segmento finalizada con exito.")
         }
         if (serviceState != ServiceState.RECORDING) {
             Log.w(TAG, "Finalize disparado pero serviceState=$serviceState. No se inicia nuevo segmento.")
@@ -632,8 +705,8 @@ class BackgroundCameraService : LifecycleService() {
         if (!isSavingEvent) {
             sendStatusUpdate("DUOVIAL ACTIVO")
             if (!event.hasError()) {
-                if (index == 0) { hasCompletedSegment0 = true; Log.d(TAG, "Segmento 0 marcado como COMPLETADO.") }
-                else if (index == 1) { hasCompletedSegment1 = true; Log.d(TAG, "Segmento 1 marcado como COMPLETADO.") }
+                if (index == 0) { hasCompletedSegment0 = true; Log.v(TAG, "Segmento 0 marcado como COMPLETADO.") }
+                else if (index == 1) { hasCompletedSegment1 = true; Log.v(TAG, "Segmento 1 marcado como COMPLETADO.") }
             }
             val nextIndex = 1 - currentRecordingIndex
             startRecordingSegment(nextIndex)
@@ -668,10 +741,10 @@ class BackgroundCameraService : LifecycleService() {
         isSavingEvent = true
         postEventRecordingActive = false
         val duration = System.currentTimeMillis() - recordingStartTime
-        Log.d(TAG, "Guardando evento. Duracion del segmento actual: $duration ms")
+        Log.v(TAG, "Guardando evento. Duracion del segmento actual: $duration ms")
         val prevIndex = 1 - currentRecordingIndex
         val hasCompletedPrevFile = if (prevIndex == 0) hasCompletedSegment0 else hasCompletedSegment1
-        Log.d(TAG, "hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
+        Log.v(TAG, "hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
         if (!hasCompletedPrevFile) {
             saveMode = SaveMode.SCENARIO_1
         } else {
@@ -679,7 +752,7 @@ class BackgroundCameraService : LifecycleService() {
             else if (duration < 14000) saveMode = SaveMode.SAVE_PREV_AND_CURR
             else saveMode = SaveMode.SAVE_ONLY_CURR
         }
-        Log.d(TAG, "Modo de guardado de evento establecido: $saveMode")
+        Log.v(TAG, "Modo de guardado de evento establecido: $saveMode")
         sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
         currentActiveRecording?.stop()
     }
@@ -701,7 +774,7 @@ class BackgroundCameraService : LifecycleService() {
             else if (duration < 14000) saveMode = SaveMode.SAVE_PREV_AND_CURR
             else saveMode = SaveMode.SAVE_ONLY_CURR
         }
-        Log.d(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
+        Log.v(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
         sendStatusUpdate("INICIANDO DUOVIAL")
         currentActiveRecording?.stop()
     }
@@ -721,7 +794,7 @@ class BackgroundCameraService : LifecycleService() {
         saveMode = SaveMode.SAVE_ONLY_CURR
         hasCompletedSegment0 = false
         hasCompletedSegment1 = false
-        updateNotification("DuoVial", "Camara lista.")
+        updateNotification("DuoVial", "Camara lista.", showActions = false)
         sendStatusUpdate("INACTIVO")
         Log.i(TAG, "Grabacion detenida sin guardar. Servicio en STANDBY.")
     }
@@ -731,7 +804,7 @@ class BackgroundCameraService : LifecycleService() {
             listOf("segment_0.mp4", "segment_1.mp4", "segment_post.mp4").forEach { name ->
                 File(cacheDir, name).let { if (it.exists()) it.delete() }
             }
-            Log.d(TAG, "Segmentos de cache eliminados.")
+            Log.v(TAG, "Segmentos de cache eliminados.")
         } catch (e: Exception) {
             Log.e(TAG, "Error al limpiar cache: ${e.message}")
         }
@@ -787,11 +860,12 @@ class BackgroundCameraService : LifecycleService() {
         if (postFile.exists()) postFile.delete()
         val fileOutputOptions = FileOutputOptions.Builder(postFile).build()
         try {
+            // Audio desactivado por defecto en CameraX (no se llama a withAudioEnabled)
             val pendingRecording = videoCapture!!.output.prepareRecording(this, fileOutputOptions)
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Finalize) onRecordingFinalized(event)
             }
-            Log.d(TAG, "Grabando 15s de post-evento...")
+            Log.v(TAG, "Grabando 15s de post-evento...")
             handler.postDelayed(stopPostEventRunnable, 15000)
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar post-evento: ${e.message}")
@@ -806,38 +880,40 @@ class BackgroundCameraService : LifecycleService() {
     private fun copyFileToDownloads(sourceFileName: String, targetFileName: String) {
         val sourceFile = File(cacheDir, sourceFileName)
         if (!sourceFile.exists() || sourceFile.length() == 0L) { Log.w(TAG, "Archivo de origen no existe o esta vacio: $sourceFileName"); return }
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, targetFileName)
-            put(MediaStore.Downloads.MIME_TYPE, "video/mp4")
-        }
-        val resolver = contentResolver
-        val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI
-        } else {
-            @Suppress("DEPRECATION") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
-        var outputStream: OutputStream? = null
-        var inputStream: FileInputStream? = null
-        try {
-            val uri = resolver.insert(collectionUri, contentValues)
-            if (uri != null) {
-                outputStream = resolver.openOutputStream(uri)
-                inputStream = FileInputStream(sourceFile)
-                val buffer = ByteArray(4096)
-                var bytesRead: Int
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    outputStream?.write(buffer, 0, bytesRead)
-                }
-                outputStream?.flush()
-                Log.d(TAG, "Copiado exitoso a Downloads: $targetFileName")
-            } else {
-                Log.e(TAG, "MediaStore insert devolvio null para $targetFileName")
+        Thread {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, targetFileName)
+                put(MediaStore.Downloads.MIME_TYPE, "video/mp4")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Excepcion al exportar $targetFileName: ${e.message}")
-        } finally {
-            try { outputStream?.close(); inputStream?.close() } catch (e: Exception) {}
-        }
+            val resolver = contentResolver
+            val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            } else {
+                @Suppress("DEPRECATION") MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            }
+            var outputStream: OutputStream? = null
+            var inputStream: FileInputStream? = null
+            try {
+                val uri = resolver.insert(collectionUri, contentValues)
+                if (uri != null) {
+                    outputStream = resolver.openOutputStream(uri)
+                    inputStream = FileInputStream(sourceFile)
+                    val buffer = ByteArray(4096)
+                    var bytesRead: Int
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream?.write(buffer, 0, bytesRead)
+                    }
+                    outputStream?.flush()
+                    Log.i(TAG, "Copiado exitoso a Downloads (hilo secundario): $targetFileName")
+                } else {
+                    Log.e(TAG, "MediaStore insert devolvio null para $targetFileName")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Excepcion al exportar $targetFileName: ${e.message}")
+            } finally {
+                try { outputStream?.close(); inputStream?.close() } catch (e: Exception) {}
+            }
+        }.start()
     }
 
     // ==========================================
@@ -850,7 +926,7 @@ class BackgroundCameraService : LifecycleService() {
             accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
             if (accelSensor != null) {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                Log.d(TAG, "Acelerometro registrado.")
+                Log.v(TAG, "Acelerometro registrado.")
             }
         } catch (e: Exception) { Log.e(TAG, "Error al registrar acelerometro: ${e.message}") }
     }
@@ -1005,14 +1081,14 @@ class BackgroundCameraService : LifecycleService() {
 
         if (!faceDetected || earValue >= earThreshold) {
             if (closedEyeStartTime > 0L) {
-                Log.d(TAG, "Ojos abiertos. Duracion total cerrados: ${currentClosedEyeDurationMs}ms")
+                Log.v(TAG, "Ojos abiertos. Duracion total cerrados: ${currentClosedEyeDurationMs}ms")
             }
             closedEyeStartTime = 0L
             currentClosedEyeDurationMs = 0L
         } else {
             if (closedEyeStartTime == 0L) {
                 closedEyeStartTime = now
-                Log.d(TAG, "Ojos cerrados detectados. Iniciando contador. EAR=$earValue")
+                Log.v(TAG, "Ojos cerrados detectados. Iniciando contador. EAR=$earValue")
             }
             currentClosedEyeDurationMs = now - closedEyeStartTime
             if (currentClosedEyeDurationMs >= closedEyeDurationMs) {
@@ -1161,7 +1237,8 @@ class BackgroundCameraService : LifecycleService() {
                 }
             })
             windowManager?.addView(bubble, layoutParams)
-            Log.d(TAG, "Burbuja flotante mostrada con exito.")
+            bubbleActive = true
+            Log.v(TAG, "Burbuja flotante mostrada con exito.")
         } catch (e: Exception) {
             Log.e(TAG, "Error al mostrar burbuja flotante: ${e.message}")
         }
@@ -1171,6 +1248,7 @@ class BackgroundCameraService : LifecycleService() {
         try {
             floatingBubbleView?.let { windowManager?.removeView(it) }
             floatingBubbleView = null
+            bubbleActive = false
         } catch (e: Exception) { Log.e(TAG, "Error al remover burbuja: ${e.message}") }
     }
 
@@ -1185,5 +1263,91 @@ class BackgroundCameraService : LifecycleService() {
                 }
             }
         } catch (e: Exception) { Log.e(TAG, "Error en vibracion: ${e.message}") }
+    }
+
+    // ==========================================
+    // MONITOREO DE TEMPERATURA DEL DISPOSITIVO
+    // ==========================================
+
+    fun getDeviceTemperature(): Float {
+        return try {
+            val batteryIntent = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+            val temp = batteryIntent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
+            temp / 10f
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al leer temperatura: ${e.message}")
+            0f
+        }
+    }
+
+    fun getTemperature(): Float = getDeviceTemperature()
+
+    private fun startTemperatureMonitoring() {
+        stopTemperatureMonitoring()
+        temperatureCheckRunnable = object : Runnable {
+            override fun run() {
+                val temp = getDeviceTemperature()
+                statusListener?.let {
+                    val mappedListener = it as? com.duovial.platform.CameraServiceManagerAndroid
+                    mappedListener?.onTemperatureChanged(temp)
+                }
+                if (temp >= TEMP_CRITICAL_CELSIUS && serviceState == ServiceState.RECORDING) {
+                    Log.w(TAG, "Temperatura critica: ${temp}°C. Deteniendo Vigilante automaticamente.")
+                    stopRecordingWithoutSaving()
+                    updateNotification("DuoVial - Vigilante Detenido", "Temperatura del dispositivo: ${temp.toInt()}°C. El Vigilante se detuvo para proteger tu telefono.", showActions = false)
+                }
+                if (serviceState == ServiceState.RECORDING) {
+                    handler.postDelayed(this, 30000)
+                }
+            }
+        }
+        handler.postDelayed(temperatureCheckRunnable!!, 30000)
+    }
+
+    private fun stopTemperatureMonitoring() {
+        temperatureCheckRunnable?.let { handler.removeCallbacks(it) }
+        temperatureCheckRunnable = null
+    }
+
+    // ==========================================
+    // AUTO-INICO DEL VIGILANTE A 30 KM/H
+    // ==========================================
+
+    fun setAutoStartEnabled(enabled: Boolean) {
+        autoStartEnabled = enabled
+        Log.i(TAG, "Auto-inicio ${if (enabled) "habilitado" else "deshabilitado"}")
+    }
+
+    fun isAutoStartEnabled(): Boolean = autoStartEnabled
+
+    fun cancelAutoStart() {
+        autoStartPending = false
+        autoStartRunnable?.let { handler.removeCallbacks(it) }
+        autoStartRunnable = null
+        Log.i(TAG, "Auto-inicio cancelado por el usuario")
+    }
+
+    private fun checkAutoStart() {
+        if (!autoStartEnabled) return
+        if (serviceState != ServiceState.STANDBY) return
+        if (autoStartPending) return
+        if (lastKnownSpeed < MIN_SPEED_FOR_EVENT_KMH) return
+        
+        val now = System.currentTimeMillis()
+        if (now - lastAutoStartActivationTime < AUTO_START_COOLDOWN_MS) return
+        
+        Log.i(TAG, "Auto-inicio detectado: velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
+        autoStartPending = true
+        
+        updateNotification("DuoVial - Auto-Inicio", "DuoVial se activara en 5 segundos. Toca para cancelar.", showActions = false)
+        
+        autoStartRunnable = Runnable {
+            if (isDestroyed || !autoStartPending) return@Runnable
+            autoStartPending = false
+            lastAutoStartActivationTime = System.currentTimeMillis()
+            Log.i(TAG, "Auto-inicio ejecutado: cambiando a modo RECORDING")
+            startRecordingMode()
+        }
+        handler.postDelayed(autoStartRunnable!!, AUTO_START_DELAY_MS)
     }
 }

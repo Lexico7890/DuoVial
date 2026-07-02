@@ -11,4 +11,6 @@ interface SettingsManager {
     suspend fun setMaxAlertsPerHour(value: Int)
     suspend fun isFatigueEnabled(): Boolean
     suspend fun setFatigueEnabled(value: Boolean)
+    suspend fun isAutoStartEnabled(): Boolean
+    suspend fun setAutoStartEnabled(value: Boolean)
 }
