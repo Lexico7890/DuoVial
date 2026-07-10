@@ -54,8 +54,8 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        serviceManager = CameraServiceManagerAndroid(this)
         settingsManager = SettingsManagerAndroid(this)
+        serviceManager = CameraServiceManagerAndroid(this, settingsManager)
 
         if (config.isAuthConfigured) {
             authService = AuthServiceAndroid(
@@ -102,6 +102,15 @@ class MainActivity : ComponentActivity() {
 
         val earThreshold = settingsManager.getEarThreshold()
         serviceManager.setEarThreshold(earThreshold)
+
+        val durationThreshold = settingsManager.getDurationThresholdMs()
+        serviceManager.setDurationThreshold(durationThreshold)
+
+        val maxAlerts = settingsManager.getMaxAlertsPerHour()
+        serviceManager.setMaxAlertsPerHour(maxAlerts)
+
+        val autoStart = settingsManager.isAutoStartEnabled()
+        serviceManager.setAutoStartEnabled(autoStart)
     }
 
     override fun onDestroy() {

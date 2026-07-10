@@ -148,29 +148,18 @@ fun MonitorScreen(
 
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(Color.Black.copy(alpha = 0.6f))
-                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
-                        .height(56.dp)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = statusLabel,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = statusColor,
-                            fontWeight = FontWeight.W700
-                        )
-                        AnimatedVisibility(visible = isRecording && !isSaving) {
-                            Text(
-                                text = "Grabando",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = DuoVialNeonRed,
-                                fontWeight = FontWeight.W700
-                            )
-                        }
-                    }
+                    Text(
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                        color = statusColor,
+                        fontWeight = FontWeight.W700
+                    )
                 }
 
                 Column(

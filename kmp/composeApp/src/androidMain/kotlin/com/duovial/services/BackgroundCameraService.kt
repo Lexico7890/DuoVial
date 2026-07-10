@@ -52,6 +52,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.LifecycleService
+import com.duovial.logging.DuoVialLog
 import java.io.File
 import java.io.FileInputStream
 import java.io.OutputStream
@@ -60,8 +61,10 @@ interface CameraStatusListener {
     fun onStatusChanged(status: String)
     fun onAccelChanged(gForce: Double)
     fun onSpeedChanged(speed: Double)
+    fun onTemperatureChanged(tempCelsius: Float)
     fun onFaceStatusChanged(enabled: Boolean, faceDetected: Boolean, earValue: Double, closedEyeDuration: Double)
     fun onDrowsinessDetected(timestamp: Long, earValue: Double)
+    fun onConcurrentCamerasNotSupported()
 }
 
 class BackgroundCameraService : LifecycleService() {
@@ -140,6 +143,10 @@ class BackgroundCameraService : LifecycleService() {
     @Volatile private var autoStartPending: Boolean = false
     private var autoStartRunnable: Runnable? = null
     private var lastAutoStartActivationTime: Long = 0L
+    
+    // Capacidad de cámaras concurrentes (trasera + frontal)
+    private var concurrentCamerasSupported: Boolean = false
+    private var concurrentCamerasChecked: Boolean = false
 
     companion object {
         var instance: BackgroundCameraService? = null
@@ -153,6 +160,7 @@ class BackgroundCameraService : LifecycleService() {
         @Volatile var pendingGForceThreshold: Double? = null
         @Volatile var pendingEarThreshold: Double? = null
         @Volatile var pendingFatigueEnabled: Boolean? = null
+        @Volatile var pendingAutoStartEnabled: Boolean? = null
         @Volatile var activeFrontPreviewView: PreviewView? = null
         @Volatile var pendingFrontPreviewView: PreviewView? = null
         @Volatile var bubbleActive: Boolean = false
@@ -190,13 +198,13 @@ class BackgroundCameraService : LifecycleService() {
 
     private val rotateRunnable = Runnable {
         if (isDestroyed) return@Runnable
-        Log.v(TAG, "Rotando buffer circular...")
+        DuoVialLog.v(TAG, "Rotando buffer circular...")
         rotateCircularBuffer()
     }
 
     private val stopPostEventRunnable = Runnable {
         if (isDestroyed) return@Runnable
-        Log.v(TAG, "Deteniendo grabacion de post-evento...")
+        DuoVialLog.v(TAG, "Deteniendo grabacion de post-evento...")
         currentActiveRecording?.stop()
     }
 
@@ -215,11 +223,11 @@ class BackgroundCameraService : LifecycleService() {
                     statusListener?.onAccelChanged(gForce)
                 }
                 if (gForce > gForceThreshold) {
-                    if (lastKnownSpeed < 0 || lastKnownSpeed >= MIN_SPEED_FOR_EVENT_KMH) {
-                        Log.i(TAG, "Evento de acelerometro DISPARADO: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
+                    if (lastKnownSpeed >= MIN_SPEED_FOR_EVENT_KMH) {
+                        DuoVialLog.i(TAG, "Evento de acelerometro DISPARADO: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
                         triggerCollisionEvent("Acelerometro Impacto Detectado: ${String.format("%.2f", gForce)} G")
                     } else {
-                        Log.v(TAG, "Evento de acelerometro DESCARTADO por velocidad: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h (min: ${MIN_SPEED_FOR_EVENT_KMH} km/h)")
+                        DuoVialLog.v(TAG, "Evento de acelerometro DESCARTADO por velocidad insuficiente: G=${String.format("%.2f", gForce)}, Velocidad=${String.format("%.1f", lastKnownSpeed)} km/h (min requerido: ${MIN_SPEED_FOR_EVENT_KMH} km/h)")
                     }
                 }
             }
@@ -243,20 +251,20 @@ class BackgroundCameraService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.v(TAG, "Creando servicio de camara...")
+        DuoVialLog.v(TAG, "Creando servicio de camara...")
         instance = this
         clearServiceStarting()
 
         pendingGForceThreshold?.let {
             gForceThreshold = it
             pendingGForceThreshold = null
-            Log.i(TAG, "Aplicado umbral G-Force pendiente: $it G")
+            DuoVialLog.i(TAG, "Aplicado umbral G-Force pendiente: $it G")
         }
 
         pendingEarThreshold?.let {
             earThreshold = it
             pendingEarThreshold = null
-            Log.i(TAG, "Aplicado umbral EAR pendiente: $it")
+            DuoVialLog.i(TAG, "Aplicado umbral EAR pendiente: $it")
         }
 
         fatigueCameraManager = FatigueCameraManager(this)
@@ -271,17 +279,27 @@ class BackgroundCameraService : LifecycleService() {
         if (pendingFatigueEnabled == true) {
             startFrontCameraSession()
             pendingFatigueEnabled = null
-            Log.i(TAG, "Deteccion de fatiga auto-activada desde pending.")
+            DuoVialLog.i(TAG, "Deteccion de fatiga auto-activada desde pending.")
+        }
+
+        pendingAutoStartEnabled?.let {
+            autoStartEnabled = it
+            pendingAutoStartEnabled = null
+            DuoVialLog.i(TAG, "Auto-inicio aplicado desde pending: $it")
         }
 
         startServiceNotification()
         startCameraX()
         startLocationUpdates()
+        // Lectura inicial de temperatura para el UI + monitoreo continuo
+        val initialTemp = getDeviceTemperature()
+        statusListener?.onTemperatureChanged(initialTemp)
+        startTemperatureMonitoring()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        Log.v(TAG, "Servicio iniciado con action: ${intent?.action}")
+        DuoVialLog.v(TAG, "Servicio iniciado con action: ${intent?.action}")
         if (intent != null) {
             when (intent.action) {
                 ACTION_START_STANDBY -> startStandbyMode()
@@ -302,12 +320,12 @@ class BackgroundCameraService : LifecycleService() {
                 ACTION_SET_DURATION_THRESHOLD -> {
                     val ms = intent.getLongExtra("duration_ms", 2000L)
                     closedEyeDurationMs = ms
-                    Log.i(TAG, "Duracion ojos cerrados actualizada a ${ms}ms")
+                    DuoVialLog.i(TAG, "Duracion ojos cerrados actualizada a ${ms}ms")
                 }
                 ACTION_SET_MAX_ALERTS -> {
                     val max = intent.getIntExtra("max_alerts", 3)
                     maxAlertsPerHour = max
-                    Log.i(TAG, "Max alertas/hora actualizado a $max")
+                    DuoVialLog.i(TAG, "Max alertas/hora actualizado a $max")
                 }
                 ACTION_SNOOZE_FATIGUE -> {
                     val minutes = intent.getIntExtra("minutes", 5)
@@ -324,7 +342,7 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     override fun onDestroy() {
-        Log.v(TAG, "Destruyendo servicio de camara...")
+        DuoVialLog.v(TAG, "Destruyendo servicio de camara...")
         isDestroyed = true
         instance = null
         stopCircularBufferTimers()
@@ -350,17 +368,17 @@ class BackgroundCameraService : LifecycleService() {
     fun bindPreviewUseCase(previewView: PreviewView) {
         val preview = activePreview
         if (preview == null) {
-            Log.i(TAG, "Preview aun no listo — encolando PreviewView como pendiente.")
+            DuoVialLog.i(TAG, "Preview aun no listo — encolando PreviewView como pendiente.")
             pendingPreviewView = previewView
             return
         }
-        Log.i(TAG, "Asociando SurfaceProvider al preview activo...")
+        DuoVialLog.i(TAG, "Asociando SurfaceProvider al preview activo...")
         handler.post {
             try {
                 preview.setSurfaceProvider(previewView.surfaceProvider)
-                Log.v(TAG, "SurfaceProvider asociado con exito.")
+                DuoVialLog.v(TAG, "SurfaceProvider asociado con exito.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al asociar SurfaceProvider: ${e.message}")
+                DuoVialLog.e(TAG, "Error al asociar SurfaceProvider: ${e.message}")
             }
         }
     }
@@ -368,13 +386,13 @@ class BackgroundCameraService : LifecycleService() {
     private fun flushPendingPreview() {
         val view = pendingPreviewView ?: return
         val preview = activePreview ?: return
-        Log.i(TAG, "Conectando PreviewView pendiente de la cola...")
+        DuoVialLog.i(TAG, "Conectando PreviewView pendiente de la cola...")
         try {
             preview.setSurfaceProvider(view.surfaceProvider)
             activePreviewView = view
-            Log.v(TAG, "Pending preview vaciado con exito.")
+            DuoVialLog.v(TAG, "Pending preview vaciado con exito.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error vaciando pending preview: ${e.message}")
+            DuoVialLog.e(TAG, "Error vaciando pending preview: ${e.message}")
         } finally {
             pendingPreviewView = null
         }
@@ -382,19 +400,19 @@ class BackgroundCameraService : LifecycleService() {
 
     fun unbindPreviewUseCase() {
         val preview = activePreview ?: return
-        Log.i(TAG, "Desasociando SurfaceProvider...")
+        DuoVialLog.i(TAG, "Desasociando SurfaceProvider...")
         handler.post {
             try {
                 preview.setSurfaceProvider(null)
-                Log.v(TAG, "SurfaceProvider desasociado.")
+                DuoVialLog.v(TAG, "SurfaceProvider desasociado.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al desasociar SurfaceProvider: ${e.message}")
+                DuoVialLog.e(TAG, "Error al desasociar SurfaceProvider: ${e.message}")
             }
         }
     }
 
     fun startStandbyMode() {
-        Log.i(TAG, "Cambiando a modo STANDBY...")
+        DuoVialLog.i(TAG, "Cambiando a modo STANDBY...")
         serviceState = ServiceState.STANDBY
         isSavingEvent = false
         postEventRecordingActive = false
@@ -402,7 +420,6 @@ class BackgroundCameraService : LifecycleService() {
         isStoppingService = false
         stopCircularBufferTimers()
         stopSensors()
-        stopTemperatureMonitoring()
         removeFloatingBubble()
         currentActiveRecording?.stop()
         currentActiveRecording = null
@@ -411,9 +428,9 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     fun forceResetToStandby() {
-        Log.w(TAG, "FORCE RESET TO STANDBY — abortando todo estado intermedio.")
+        DuoVialLog.w(TAG, "FORCE RESET TO STANDBY — abortando todo estado intermedio.")
         stopCircularBufferTimers()
-        try { currentActiveRecording?.stop() } catch (e: Exception) { Log.e(TAG, "Error al detener grabacion durante forceReset: ${e.message}") }
+        try { currentActiveRecording?.stop() } catch (e: Exception) { DuoVialLog.e(TAG, "Error al detener grabacion durante forceReset: ${e.message}") }
         currentActiveRecording = null
         isSavingEvent = false
         isStoppingService = false
@@ -422,33 +439,34 @@ class BackgroundCameraService : LifecycleService() {
         hasCompletedSegment0 = false
         hasCompletedSegment1 = false
         serviceState = ServiceState.STANDBY
+        removeFloatingBubble()
         updateNotification("DuoVial", "Camara lista.", showActions = false)
         sendStatusUpdate("INACTIVO")
-        Log.i(TAG, "Force reset completo. Servicio en STANDBY.")
+        DuoVialLog.i(TAG, "Force reset completo. Servicio en STANDBY.")
     }
 
     fun setGForceThreshold(threshold: Double) {
         if (threshold < 1.5 || threshold > 5.0) {
-            Log.w(TAG, "Umbral G-Force fuera de rango (1.5..5.0): $threshold — ignorado.")
+            DuoVialLog.w(TAG, "Umbral G-Force fuera de rango (1.5..5.0): $threshold — ignorado.")
             return
         }
         gForceThreshold = threshold
-        Log.i(TAG, "Umbral G-Force actualizado a $threshold G")
+        DuoVialLog.i(TAG, "Umbral G-Force actualizado a $threshold G")
     }
 
     fun startRecordingMode() {
         if (serviceState == ServiceState.RECORDING) {
-            Log.v(TAG, "El servicio ya esta en modo RECORDING. Re-emitiendo estado para sincronizar JS.")
+            DuoVialLog.v(TAG, "El servicio ya esta en modo RECORDING. Re-emitiendo estado para sincronizar JS.")
             sendStatusUpdate("DUOVIAL ACTIVO")
             return
         }
         val temp = getDeviceTemperature()
         if (temp >= TEMP_CRITICAL_CELSIUS) {
-            Log.w(TAG, "No se puede iniciar Vigilante: temperatura critica ($temp°C)")
+            DuoVialLog.w(TAG, "No se puede iniciar Vigilante: temperatura critica ($temp°C)")
             sendStatusUpdate("ERROR EN CAMARA")
             return
         }
-        Log.i(TAG, "Cambiando a modo RECORDING...")
+        DuoVialLog.i(TAG, "Cambiando a modo RECORDING...")
         serviceState = ServiceState.RECORDING
         updateNotification("DuoVial - Vigilando", "Grabacion circular activa en segundo plano.", showActions = true)
         startSensors()
@@ -459,7 +477,7 @@ class BackgroundCameraService : LifecycleService() {
         if (cameraReady) {
             startCircularBuffer()
         } else {
-            Log.w(TAG, "CameraX aun no esta lista. El buffer circular arrancara cuando termine la inicializacion.")
+            DuoVialLog.w(TAG, "CameraX aun no esta lista. El buffer circular arrancara cuando termine la inicializacion.")
             sendStatusUpdate("INICIANDO DUOVIAL")
         }
     }
@@ -467,7 +485,7 @@ class BackgroundCameraService : LifecycleService() {
     fun onPreviewViewDropped() {
         activePreviewView = null
         activePreview?.setSurfaceProvider(null)
-        Log.i(TAG, "Vista de previsualizacion descartada. Surface desconectado.")
+        DuoVialLog.i(TAG, "Vista de previsualizacion descartada. Surface desconectado.")
     }
 
     fun onFrontPreviewAvailable(previewView: PreviewView) {
@@ -476,9 +494,9 @@ class BackgroundCameraService : LifecycleService() {
         if (facial != null && faceProcessor?.isActive == true) {
             try {
                 facial.start(facialLifecycleOwner, previewView)
-                Log.v(TAG, "Front PreviewView vinculado en caliente a FatigueCameraManager.")
+                DuoVialLog.v(TAG, "Front PreviewView vinculado en caliente a FatigueCameraManager.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al vincular front PreviewView: ${e.message}")
+                DuoVialLog.e(TAG, "Error al vincular front PreviewView: ${e.message}")
             }
         }
     }
@@ -487,7 +505,7 @@ class BackgroundCameraService : LifecycleService() {
         activeFrontPreviewView = null
         pendingFrontPreviewView = null
         fatigueCameraManager?.stop()
-        Log.i(TAG, "Front PreviewView descartada. Camara frontal detenida.")
+        DuoVialLog.i(TAG, "Front PreviewView descartada. Camara frontal detenida.")
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -497,7 +515,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun sendStatusUpdate(status: String) {
         statusListener?.onStatusChanged(status)
-        Log.v(TAG, "Estado actualizado: $status")
+        DuoVialLog.v(TAG, "Estado actualizado: $status")
     }
 
     // ==========================================
@@ -582,7 +600,7 @@ class BackgroundCameraService : LifecycleService() {
     // ==========================================
 
     private fun startCameraX() {
-        Log.i(TAG, "Iniciando CameraX...")
+        DuoVialLog.i(TAG, "Iniciando CameraX...")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
@@ -590,7 +608,7 @@ class BackgroundCameraService : LifecycleService() {
                 val qualitySelector = try {
                     QualitySelector.from(Quality.HD)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Quality.HD no soportado, usando Fallback a SD")
+                    DuoVialLog.w(TAG, "Quality.HD no soportado, usando Fallback a SD")
                     QualitySelector.from(Quality.SD)
                 }
                 val recorder = Recorder.Builder()
@@ -605,9 +623,9 @@ class BackgroundCameraService : LifecycleService() {
                 if (activeView != null) {
                     try {
                         preview.setSurfaceProvider(activeView.surfaceProvider)
-                        Log.v(TAG, "PreviewView vinculado con exito en startCameraX.")
+                        DuoVialLog.v(TAG, "PreviewView vinculado con exito en startCameraX.")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error al vincular vista: ${e.message}")
+                        DuoVialLog.e(TAG, "Error al vincular vista: ${e.message}")
                     }
                 }
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -615,24 +633,24 @@ class BackgroundCameraService : LifecycleService() {
                 cameraLifecycleOwner.registry.currentState = Lifecycle.State.STARTED
                 cameraLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED
                 cameraProvider?.bindToLifecycle(cameraLifecycleOwner, cameraSelector, preview, videoCapture)
-                Log.v(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
+                DuoVialLog.v(TAG, "CameraX vinculada correctamente (Preview + VideoCapture) con lifecycle RESUMED.")
                 cameraReady = true
                 flushPendingPreview()
                 handler.postDelayed({
                     val view = activePreviewView
                     if (view != null && activePreview != null) {
                         activePreview?.setSurfaceProvider(view.surfaceProvider)
-                        Log.v(TAG, "Surface provider re-aplicado con retraso de seguridad (500ms).")
+                        DuoVialLog.v(TAG, "Surface provider re-aplicado con retraso de seguridad (500ms).")
                     }
                 }, 500)
                 if (serviceState == ServiceState.RECORDING) {
-                    Log.i(TAG, "CameraX lista y modo RECORDING pendiente. Arrancando buffer circular...")
+                    DuoVialLog.i(TAG, "CameraX lista y modo RECORDING pendiente. Arrancando buffer circular...")
                     startCircularBuffer()
                 } else {
                     sendStatusUpdate("INACTIVO")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error al iniciar CameraX: ${e.message}")
+                DuoVialLog.e(TAG, "Error al iniciar CameraX: ${e.message}")
                 sendStatusUpdate("ERROR EN CAMARA")
             }
         }, ContextCompat.getMainExecutor(this))
@@ -656,16 +674,16 @@ class BackgroundCameraService : LifecycleService() {
             if (f1.exists()) f1.delete()
             val fPost = File(cacheDir, "segment_post.mp4")
             if (fPost.exists()) fPost.delete()
-            Log.v(TAG, "Cache de segmentos de video limpiada con exito.")
+            DuoVialLog.v(TAG, "Cache de segmentos de video limpiada con exito.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al limpiar cache de segmentos: ${e.message}")
+            DuoVialLog.e(TAG, "Error al limpiar cache de segmentos: ${e.message}")
         }
         sendStatusUpdate("INICIANDO DUOVIAL")
         startRecordingSegment(0)
     }
 
     private fun startRecordingSegment(index: Int) {
-        if (videoCapture == null) { Log.e(TAG, "No se puede grabar: videoCapture es nulo."); return }
+        if (videoCapture == null) { DuoVialLog.e(TAG, "No se puede grabar: videoCapture es nulo."); return }
         currentRecordingIndex = index
         val segmentFile = File(cacheDir, "segment_$index.mp4")
         if (segmentFile.exists()) segmentFile.delete()
@@ -675,17 +693,17 @@ class BackgroundCameraService : LifecycleService() {
             val pendingRecording = videoCapture!!.output.prepareRecording(this, fileOutputOptions)
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Start) {
-                    Log.v(TAG, "Grabacion de segmento_$index iniciada con exito.")
+                    DuoVialLog.v(TAG, "Grabacion de segmento_$index iniciada con exito.")
                     if (!isSavingEvent) sendStatusUpdate("DUOVIAL ACTIVO")
                 } else if (event is VideoRecordEvent.Finalize) {
                     onRecordingFinalized(event)
                 }
             }
             recordingStartTime = System.currentTimeMillis()
-            Log.v(TAG, "Grabando segmento_$index en cache...")
+            DuoVialLog.v(TAG, "Grabando segmento_$index en cache...")
             handler.postDelayed(rotateRunnable, 15000)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar grabacion: ${e.message}")
+            DuoVialLog.e(TAG, "Error al iniciar grabacion: ${e.message}")
         }
     }
 
@@ -694,19 +712,19 @@ class BackgroundCameraService : LifecycleService() {
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
         val index = currentRecordingIndex
         if (event.hasError()) {
-            Log.e(TAG, "Grabacion finalizada con error: Codigo ${event.error}, Causa: ${event.cause?.message}")
+            DuoVialLog.e(TAG, "Grabacion finalizada con error: Codigo ${event.error}, Causa: ${event.cause?.message}")
         } else {
-            Log.v(TAG, "Grabacion de segmento finalizada con exito.")
+            DuoVialLog.v(TAG, "Grabacion de segmento finalizada con exito.")
         }
         if (serviceState != ServiceState.RECORDING) {
-            Log.w(TAG, "Finalize disparado pero serviceState=$serviceState. No se inicia nuevo segmento.")
+            DuoVialLog.w(TAG, "Finalize disparado pero serviceState=$serviceState. No se inicia nuevo segmento.")
             return
         }
         if (!isSavingEvent) {
             sendStatusUpdate("DUOVIAL ACTIVO")
             if (!event.hasError()) {
-                if (index == 0) { hasCompletedSegment0 = true; Log.v(TAG, "Segmento 0 marcado como COMPLETADO.") }
-                else if (index == 1) { hasCompletedSegment1 = true; Log.v(TAG, "Segmento 1 marcado como COMPLETADO.") }
+                if (index == 0) { hasCompletedSegment0 = true; DuoVialLog.v(TAG, "Segmento 0 marcado como COMPLETADO.") }
+                else if (index == 1) { hasCompletedSegment1 = true; DuoVialLog.v(TAG, "Segmento 1 marcado como COMPLETADO.") }
             }
             val nextIndex = 1 - currentRecordingIndex
             startRecordingSegment(nextIndex)
@@ -729,7 +747,7 @@ class BackgroundCameraService : LifecycleService() {
         val now = System.currentTimeMillis()
         if (now - lastEventTriggerTime < 5000) return
         lastEventTriggerTime = now
-        Log.w(TAG, "EVENTO DETECTADO POR: $reason")
+        DuoVialLog.w(TAG, "EVENTO DETECTADO POR: $reason")
         saveEvent()
     }
 
@@ -741,10 +759,10 @@ class BackgroundCameraService : LifecycleService() {
         isSavingEvent = true
         postEventRecordingActive = false
         val duration = System.currentTimeMillis() - recordingStartTime
-        Log.v(TAG, "Guardando evento. Duracion del segmento actual: $duration ms")
+        DuoVialLog.v(TAG, "Guardando evento. Duracion del segmento actual: $duration ms")
         val prevIndex = 1 - currentRecordingIndex
         val hasCompletedPrevFile = if (prevIndex == 0) hasCompletedSegment0 else hasCompletedSegment1
-        Log.v(TAG, "hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
+        DuoVialLog.v(TAG, "hasCompletedPrevFile ($prevIndex): $hasCompletedPrevFile (Segment0: $hasCompletedSegment0, Segment1: $hasCompletedSegment1)")
         if (!hasCompletedPrevFile) {
             saveMode = SaveMode.SCENARIO_1
         } else {
@@ -752,14 +770,14 @@ class BackgroundCameraService : LifecycleService() {
             else if (duration < 14000) saveMode = SaveMode.SAVE_PREV_AND_CURR
             else saveMode = SaveMode.SAVE_ONLY_CURR
         }
-        Log.v(TAG, "Modo de guardado de evento establecido: $saveMode")
+        DuoVialLog.v(TAG, "Modo de guardado de evento establecido: $saveMode")
         sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
         currentActiveRecording?.stop()
     }
 
     private fun stopAndSaveBuffer() {
         if (isSavingEvent || isStoppingService) return
-        Log.i(TAG, "Deteniendo Vigilante. Guardando buffer actual y apagando...")
+        DuoVialLog.i(TAG, "Deteniendo Vigilante. Guardando buffer actual y apagando...")
         stopCircularBufferTimers()
         eventTimestamp = System.currentTimeMillis() / 1000
         isSavingEvent = true
@@ -774,7 +792,7 @@ class BackgroundCameraService : LifecycleService() {
             else if (duration < 14000) saveMode = SaveMode.SAVE_PREV_AND_CURR
             else saveMode = SaveMode.SAVE_ONLY_CURR
         }
-        Log.v(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
+        DuoVialLog.v(TAG, "stopAndSave: Modo de guardado establecido: $saveMode")
         sendStatusUpdate("INICIANDO DUOVIAL")
         currentActiveRecording?.stop()
     }
@@ -782,7 +800,7 @@ class BackgroundCameraService : LifecycleService() {
     private fun stopRecordingWithoutSaving() {
         if (serviceState != ServiceState.RECORDING) return
         if (isSavingEvent) return
-        Log.i(TAG, "Deteniendo grabacion sin guardar buffer...")
+        DuoVialLog.i(TAG, "Deteniendo grabacion sin guardar buffer...")
         stopCircularBufferTimers()
         isStoppingService = true
         serviceState = ServiceState.STANDBY
@@ -794,9 +812,10 @@ class BackgroundCameraService : LifecycleService() {
         saveMode = SaveMode.SAVE_ONLY_CURR
         hasCompletedSegment0 = false
         hasCompletedSegment1 = false
+        removeFloatingBubble()
         updateNotification("DuoVial", "Camara lista.", showActions = false)
         sendStatusUpdate("INACTIVO")
-        Log.i(TAG, "Grabacion detenida sin guardar. Servicio en STANDBY.")
+        DuoVialLog.i(TAG, "Grabacion detenida sin guardar. Servicio en STANDBY.")
     }
 
     private fun cleanupCacheSegments() {
@@ -804,16 +823,16 @@ class BackgroundCameraService : LifecycleService() {
             listOf("segment_0.mp4", "segment_1.mp4", "segment_post.mp4").forEach { name ->
                 File(cacheDir, name).let { if (it.exists()) it.delete() }
             }
-            Log.v(TAG, "Segmentos de cache eliminados.")
+            DuoVialLog.v(TAG, "Segmentos de cache eliminados.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al limpiar cache: ${e.message}")
+            DuoVialLog.e(TAG, "Error al limpiar cache: ${e.message}")
         }
     }
 
     private fun handleEventSaveTransition() {
         if (isStoppingService) {
             savePreEventSegments()
-            Log.i(TAG, "Buffer pre-evento guardado. Volviendo a STANDBY.")
+            DuoVialLog.i(TAG, "Buffer pre-evento guardado. Volviendo a STANDBY.")
             isSavingEvent = false
             isStoppingService = false
             postEventRecordingActive = false
@@ -832,7 +851,7 @@ class BackgroundCameraService : LifecycleService() {
                 SaveMode.SAVE_PREV_AND_CURR -> 2
             }
             copyFileToDownloads("segment_post.mp4", "incident_${eventTimestamp}_part$finalPartIndex.mp4")
-            Log.i(TAG, "Incidente guardado con exito. Reanudando buffer circular...")
+            DuoVialLog.i(TAG, "Incidente guardado con exito. Reanudando buffer circular...")
             sendStatusUpdate("DUOVIAL ACTIVO")
             val postFile = File(cacheDir, "segment_post.mp4")
             if (postFile.exists()) postFile.delete()
@@ -854,7 +873,7 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     private fun startPostEventRecording() {
-        if (videoCapture == null) { Log.e(TAG, "No se puede iniciar post-evento: videoCapture es nulo."); startCircularBuffer(); return }
+        if (videoCapture == null) { DuoVialLog.e(TAG, "No se puede iniciar post-evento: videoCapture es nulo."); startCircularBuffer(); return }
         sendStatusUpdate("GENERANDO CONTENIDO POST EVENTO")
         val postFile = File(cacheDir, "segment_post.mp4")
         if (postFile.exists()) postFile.delete()
@@ -865,10 +884,10 @@ class BackgroundCameraService : LifecycleService() {
             currentActiveRecording = pendingRecording.start(ContextCompat.getMainExecutor(this)) { event ->
                 if (event is VideoRecordEvent.Finalize) onRecordingFinalized(event)
             }
-            Log.v(TAG, "Grabando 15s de post-evento...")
+            DuoVialLog.v(TAG, "Grabando 15s de post-evento...")
             handler.postDelayed(stopPostEventRunnable, 15000)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar post-evento: ${e.message}")
+            DuoVialLog.e(TAG, "Error al iniciar post-evento: ${e.message}")
             startCircularBuffer()
         }
     }
@@ -879,7 +898,7 @@ class BackgroundCameraService : LifecycleService() {
 
     private fun copyFileToDownloads(sourceFileName: String, targetFileName: String) {
         val sourceFile = File(cacheDir, sourceFileName)
-        if (!sourceFile.exists() || sourceFile.length() == 0L) { Log.w(TAG, "Archivo de origen no existe o esta vacio: $sourceFileName"); return }
+        if (!sourceFile.exists() || sourceFile.length() == 0L) { DuoVialLog.w(TAG, "Archivo de origen no existe o esta vacio: $sourceFileName"); return }
         Thread {
             val contentValues = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, targetFileName)
@@ -904,12 +923,12 @@ class BackgroundCameraService : LifecycleService() {
                         outputStream?.write(buffer, 0, bytesRead)
                     }
                     outputStream?.flush()
-                    Log.i(TAG, "Copiado exitoso a Downloads (hilo secundario): $targetFileName")
+                    DuoVialLog.i(TAG, "Copiado exitoso a Downloads (hilo secundario): $targetFileName")
                 } else {
-                    Log.e(TAG, "MediaStore insert devolvio null para $targetFileName")
+                    DuoVialLog.e(TAG, "MediaStore insert devolvio null para $targetFileName")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Excepcion al exportar $targetFileName: ${e.message}")
+                DuoVialLog.e(TAG, "Excepcion al exportar $targetFileName: ${e.message}")
             } finally {
                 try { outputStream?.close(); inputStream?.close() } catch (e: Exception) {}
             }
@@ -926,9 +945,9 @@ class BackgroundCameraService : LifecycleService() {
             accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
             if (accelSensor != null) {
                 sensorManager?.registerListener(accelListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-                Log.v(TAG, "Acelerometro registrado.")
+                DuoVialLog.v(TAG, "Acelerometro registrado.")
             }
-        } catch (e: Exception) { Log.e(TAG, "Error al registrar acelerometro: ${e.message}") }
+        } catch (e: Exception) { DuoVialLog.e(TAG, "Error al registrar acelerometro: ${e.message}") }
     }
 
     private fun stopSensors() { sensorManager?.unregisterListener(accelListener) }
@@ -957,17 +976,17 @@ class BackgroundCameraService : LifecycleService() {
                 locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
                 if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
                     locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, locationListener)
-                    Log.w(TAG, "GPS Provider registrado para velocimetro.")
+                    DuoVialLog.w(TAG, "GPS Provider registrado para velocimetro.")
                 }
 
-            } else { Log.e(TAG, "Sin permisos de GPS — no se puede iniciar velocimetro.") }
-        } catch (e: SecurityException) { Log.e(TAG, "Error de seguridad al iniciar velocimetro: ${e.message}") }
-        catch (e: Exception) { Log.e(TAG, "Error al iniciar velocimetro: ${e.message}") }
+            } else { DuoVialLog.e(TAG, "Sin permisos de GPS — no se puede iniciar velocimetro.") }
+        } catch (e: SecurityException) { DuoVialLog.e(TAG, "Error de seguridad al iniciar velocimetro: ${e.message}") }
+        catch (e: Exception) { DuoVialLog.e(TAG, "Error al iniciar velocimetro: ${e.message}") }
     }
 
     private fun stopLocationUpdates() {
-        try { locationManager?.removeUpdates(locationListener); Log.w(TAG, "Velocimetro desvinculado con exito.") }
-        catch (e: Exception) { Log.e(TAG, "Error al detener actualizaciones de ubicacion: ${e.message}") }
+        try { locationManager?.removeUpdates(locationListener); DuoVialLog.w(TAG, "Velocimetro desvinculado con exito.") }
+        catch (e: Exception) { DuoVialLog.e(TAG, "Error al detener actualizaciones de ubicacion: ${e.message}") }
     }
 
     fun resyncJsState() {
@@ -979,7 +998,7 @@ class BackgroundCameraService : LifecycleService() {
         statusListener?.onStatusChanged(currentStatus)
         if (lastKnownGForce >= 0) statusListener?.onAccelChanged(lastKnownGForce)
         if (lastKnownSpeed >= 0) statusListener?.onSpeedChanged(lastKnownSpeed)
-        Log.i(TAG, "Estado re-sincronizado con JS: $currentStatus")
+        DuoVialLog.i(TAG, "Estado re-sincronizado con JS: $currentStatus")
     }
 
     // ==========================================
@@ -988,26 +1007,41 @@ class BackgroundCameraService : LifecycleService() {
 
     fun toggleFatigueDetection(enable: Boolean) {
         if (enable) {
-            Log.i(TAG, "Activando deteccion de fatiga...")
+            DuoVialLog.i(TAG, "Activando deteccion de fatiga...")
             startFrontCameraSession()
         } else {
-            Log.i(TAG, "Desactivando deteccion de fatiga.")
+            DuoVialLog.i(TAG, "Desactivando deteccion de fatiga.")
             stopFatigueDetection()
         }
     }
 
     private fun startFrontCameraSession() {
         val facial = fatigueCameraManager ?: run {
-            Log.e(TAG, "FatigueCameraManager no disponible.")
+            DuoVialLog.e(TAG, "FatigueCameraManager no disponible.")
             return
         }
         val processor = faceProcessor ?: run {
-            Log.e(TAG, "FaceProcessor no disponible.")
+            DuoVialLog.e(TAG, "FaceProcessor no disponible.")
             return
         }
         if (processor.isActive) {
-            Log.w(TAG, "FaceProcessor ya esta activo.")
+            DuoVialLog.w(TAG, "FaceProcessor ya esta activo.")
             return
+        }
+
+        // Verificar soporte de cámaras concurrentes
+        val supportsConcurrent = isConcurrentCamerasSupported()
+        if (!supportsConcurrent && serviceState == ServiceState.RECORDING) {
+            // El dispositivo no soporta cámaras concurrentes
+            // Pausar el modo Vigilante para evitar conflictos
+            DuoVialLog.w(TAG, "Dispositivo no soporta cámaras concurrentes. Pausando modo Vigilante para activar cámara frontal.")
+            statusListener?.onConcurrentCamerasNotSupported()
+            // Pausar grabación circular temporalmente
+            stopCircularBufferTimers()
+            try { currentActiveRecording?.stop() } catch (e: Exception) { 
+                DuoVialLog.e(TAG, "Error al pausar grabación para cámara frontal: ${e.message}") 
+            }
+            currentActiveRecording = null
         }
 
         hourResetTime = System.currentTimeMillis()
@@ -1017,7 +1051,7 @@ class BackgroundCameraService : LifecycleService() {
 
         val frontView = activeFrontPreviewView ?: pendingFrontPreviewView
         if (frontView == null) {
-            Log.w(TAG, "Front PreviewView aun no disponible — encolando activacion para cuando llegue.")
+            DuoVialLog.w(TAG, "Front PreviewView aun no disponible — encolando activacion para cuando llegue.")
             pendingFatigueEnabled = true
             return
         }
@@ -1026,7 +1060,7 @@ class BackgroundCameraService : LifecycleService() {
         processor.start()
         facialLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED
         facial.start(facialLifecycleOwner, frontView)
-        Log.i(TAG, "Camara frontal + FaceProcessor activados.")
+        DuoVialLog.i(TAG, "Camara frontal + FaceProcessor activados.")
         sendFatigueStatusEvent(true, false, 0.0, 0.0)
     }
 
@@ -1039,17 +1073,23 @@ class BackgroundCameraService : LifecycleService() {
         currentClosedEyeDurationMs = 0L
         currentEar = 0.0
         currentFaceDetected = false
-        Log.i(TAG, "Deteccion de fatiga completamente detenida.")
+        DuoVialLog.i(TAG, "Deteccion de fatiga completamente detenida.")
         sendFatigueStatusEvent(false, false, 0.0, 0.0)
+        
+        // Reanudar modo Vigilante si fue pausado por falta de cámaras concurrentes
+        if (!isConcurrentCamerasSupported() && serviceState == ServiceState.RECORDING && cameraReady) {
+            DuoVialLog.i(TAG, "Reanudando modo Vigilante tras desactivar cámara frontal.")
+            startCircularBuffer()
+        }
     }
 
     fun setEarThreshold(threshold: Double) {
         if (threshold < 0.1 || threshold > 0.4) {
-            Log.w(TAG, "Umbral EAR fuera de rango (0.1..0.4): $threshold — ignorado.")
+            DuoVialLog.w(TAG, "Umbral EAR fuera de rango (0.1..0.4): $threshold — ignorado.")
             return
         }
         earThreshold = threshold
-        Log.i(TAG, "Umbral EAR actualizado a $threshold")
+        DuoVialLog.i(TAG, "Umbral EAR actualizado a $threshold")
     }
 
     fun getEarThreshold(): Double = earThreshold
@@ -1058,7 +1098,7 @@ class BackgroundCameraService : LifecycleService() {
         snoozeMinutes = minutes
         snoozeEndTime = System.currentTimeMillis() + (minutes * 60L * 1000L)
         isSnoozed = true
-        Log.i(TAG, "Snooze de fatiga activado por $minutes minutos.")
+        DuoVialLog.i(TAG, "Snooze de fatiga activado por $minutes minutos.")
     }
 
     fun getFatigueStatus(): Map<String, Any> {
@@ -1081,14 +1121,14 @@ class BackgroundCameraService : LifecycleService() {
 
         if (!faceDetected || earValue >= earThreshold) {
             if (closedEyeStartTime > 0L) {
-                Log.v(TAG, "Ojos abiertos. Duracion total cerrados: ${currentClosedEyeDurationMs}ms")
+                DuoVialLog.v(TAG, "Ojos abiertos. Duracion total cerrados: ${currentClosedEyeDurationMs}ms")
             }
             closedEyeStartTime = 0L
             currentClosedEyeDurationMs = 0L
         } else {
             if (closedEyeStartTime == 0L) {
                 closedEyeStartTime = now
-                Log.v(TAG, "Ojos cerrados detectados. Iniciando contador. EAR=$earValue")
+                DuoVialLog.v(TAG, "Ojos cerrados detectados. Iniciando contador. EAR=$earValue")
             }
             currentClosedEyeDurationMs = now - closedEyeStartTime
             if (currentClosedEyeDurationMs >= closedEyeDurationMs) {
@@ -1099,7 +1139,7 @@ class BackgroundCameraService : LifecycleService() {
                 }
                 if (isSnoozed && now >= snoozeEndTime) {
                     isSnoozed = false
-                    Log.i(TAG, "Snooze finalizado.")
+                    DuoVialLog.i(TAG, "Snooze finalizado.")
                 }
                 if (alertCountThisHour < maxAlertsPerHour && !isSnoozed) {
                     if (now - lastAlertTime > 5000L) {
@@ -1125,7 +1165,7 @@ class BackgroundCameraService : LifecycleService() {
         val now = System.currentTimeMillis()
         lastAlertTime = now
         alertCountThisHour++
-        Log.w(TAG, "FATIGA DETECTADA! EAR=$earValue, Alertas esta hora: $alertCountThisHour")
+        DuoVialLog.w(TAG, "FATIGA DETECTADA! EAR=$earValue, Alertas esta hora: $alertCountThisHour")
         triggerVibration()
         triggerFatigueAlarmSound()
         statusListener?.onDrowsinessDetected(now, earValue)
@@ -1139,7 +1179,7 @@ class BackgroundCameraService : LifecycleService() {
                 try { toneGen.release() } catch (_: Exception) {}
             }, 2100)
         } catch (e: Exception) {
-            Log.e(TAG, "Error en alarma de sonido (fatiga): ${e.message}")
+            DuoVialLog.e(TAG, "Error en alarma de sonido (fatiga): ${e.message}")
         }
     }
 
@@ -1151,7 +1191,7 @@ class BackgroundCameraService : LifecycleService() {
                 try { toneGen.release() } catch (_: Exception) {}
             }, 1100)
         } catch (e: Exception) {
-            Log.e(TAG, "Error en alarma de sonido (evento): ${e.message}")
+            DuoVialLog.e(TAG, "Error en alarma de sonido (evento): ${e.message}")
         }
     }
 
@@ -1238,9 +1278,9 @@ class BackgroundCameraService : LifecycleService() {
             })
             windowManager?.addView(bubble, layoutParams)
             bubbleActive = true
-            Log.v(TAG, "Burbuja flotante mostrada con exito.")
+            DuoVialLog.v(TAG, "Burbuja flotante mostrada con exito.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al mostrar burbuja flotante: ${e.message}")
+            DuoVialLog.e(TAG, "Error al mostrar burbuja flotante: ${e.message}")
         }
     }
 
@@ -1249,7 +1289,7 @@ class BackgroundCameraService : LifecycleService() {
             floatingBubbleView?.let { windowManager?.removeView(it) }
             floatingBubbleView = null
             bubbleActive = false
-        } catch (e: Exception) { Log.e(TAG, "Error al remover burbuja: ${e.message}") }
+        } catch (e: Exception) { DuoVialLog.e(TAG, "Error al remover burbuja: ${e.message}") }
     }
 
     private fun triggerVibration() {
@@ -1262,7 +1302,7 @@ class BackgroundCameraService : LifecycleService() {
                     @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 500, 200, 500), -1)
                 }
             }
-        } catch (e: Exception) { Log.e(TAG, "Error en vibracion: ${e.message}") }
+        } catch (e: Exception) { DuoVialLog.e(TAG, "Error en vibracion: ${e.message}") }
     }
 
     // ==========================================
@@ -1275,7 +1315,7 @@ class BackgroundCameraService : LifecycleService() {
             val temp = batteryIntent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
             temp / 10f
         } catch (e: Exception) {
-            Log.e(TAG, "Error al leer temperatura: ${e.message}")
+            DuoVialLog.e(TAG, "Error al leer temperatura: ${e.message}")
             0f
         }
     }
@@ -1286,22 +1326,20 @@ class BackgroundCameraService : LifecycleService() {
         stopTemperatureMonitoring()
         temperatureCheckRunnable = object : Runnable {
             override fun run() {
+                if (isDestroyed) return
                 val temp = getDeviceTemperature()
-                statusListener?.let {
-                    val mappedListener = it as? com.duovial.platform.CameraServiceManagerAndroid
-                    mappedListener?.onTemperatureChanged(temp)
-                }
+                statusListener?.onTemperatureChanged(temp)
                 if (temp >= TEMP_CRITICAL_CELSIUS && serviceState == ServiceState.RECORDING) {
-                    Log.w(TAG, "Temperatura critica: ${temp}°C. Deteniendo Vigilante automaticamente.")
+                    DuoVialLog.w(TAG, "Temperatura critica: ${temp}°C. Deteniendo Vigilante automaticamente.")
                     stopRecordingWithoutSaving()
                     updateNotification("DuoVial - Vigilante Detenido", "Temperatura del dispositivo: ${temp.toInt()}°C. El Vigilante se detuvo para proteger tu telefono.", showActions = false)
                 }
-                if (serviceState == ServiceState.RECORDING) {
-                    handler.postDelayed(this, 30000)
-                }
+                // Monitoreo continuo en cualquier estado (30s)
+                handler.postDelayed(this, 30000)
             }
         }
-        handler.postDelayed(temperatureCheckRunnable!!, 30000)
+        // Primera lectura inmediata, luego cada 30 segundos
+        handler.post(temperatureCheckRunnable!!)
     }
 
     private fun stopTemperatureMonitoring() {
@@ -1315,16 +1353,30 @@ class BackgroundCameraService : LifecycleService() {
 
     fun setAutoStartEnabled(enabled: Boolean) {
         autoStartEnabled = enabled
-        Log.i(TAG, "Auto-inicio ${if (enabled) "habilitado" else "deshabilitado"}")
+        DuoVialLog.i(TAG, "Auto-inicio ${if (enabled) "habilitado" else "deshabilitado"}")
     }
 
     fun isAutoStartEnabled(): Boolean = autoStartEnabled
+
+    /**
+     * Verifica si el dispositivo soporta cámaras concurrentes (trasera + frontal).
+     * El resultado se cachea para evitar verificaciones repetidas.
+     */
+    fun isConcurrentCamerasSupported(): Boolean {
+        if (!concurrentCamerasChecked) {
+            val result = CameraCapabilities.getConcurrentCameraSupport(this)
+            concurrentCamerasSupported = result.supported
+            concurrentCamerasChecked = true
+            DuoVialLog.i(TAG, "Cámaras concurrentes soportadas: $concurrentCamerasSupported${result.reason?.let { " ($it)" } ?: ""}")
+        }
+        return concurrentCamerasSupported
+    }
 
     fun cancelAutoStart() {
         autoStartPending = false
         autoStartRunnable?.let { handler.removeCallbacks(it) }
         autoStartRunnable = null
-        Log.i(TAG, "Auto-inicio cancelado por el usuario")
+        DuoVialLog.i(TAG, "Auto-inicio cancelado por el usuario")
     }
 
     private fun checkAutoStart() {
@@ -1336,7 +1388,7 @@ class BackgroundCameraService : LifecycleService() {
         val now = System.currentTimeMillis()
         if (now - lastAutoStartActivationTime < AUTO_START_COOLDOWN_MS) return
         
-        Log.i(TAG, "Auto-inicio detectado: velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
+        DuoVialLog.i(TAG, "Auto-inicio detectado: velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
         autoStartPending = true
         
         updateNotification("DuoVial - Auto-Inicio", "DuoVial se activara en 5 segundos. Toca para cancelar.", showActions = false)
@@ -1345,7 +1397,7 @@ class BackgroundCameraService : LifecycleService() {
             if (isDestroyed || !autoStartPending) return@Runnable
             autoStartPending = false
             lastAutoStartActivationTime = System.currentTimeMillis()
-            Log.i(TAG, "Auto-inicio ejecutado: cambiando a modo RECORDING")
+            DuoVialLog.i(TAG, "Auto-inicio ejecutado: cambiando a modo RECORDING")
             startRecordingMode()
         }
         handler.postDelayed(autoStartRunnable!!, AUTO_START_DELAY_MS)

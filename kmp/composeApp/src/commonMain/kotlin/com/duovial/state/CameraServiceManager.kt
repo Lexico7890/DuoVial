@@ -19,6 +19,7 @@ interface CameraServiceManager {
     fun setAutoStartEnabled(enabled: Boolean)
     fun isAutoStartEnabled(): Boolean
     fun cancelAutoStart()
+    fun isConcurrentCamerasSupported(): Boolean
 
     fun loadIncidents(): List<Incident>
 

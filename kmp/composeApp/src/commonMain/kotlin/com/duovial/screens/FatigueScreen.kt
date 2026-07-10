@@ -59,6 +59,7 @@ import com.duovial.theme.DuoVialNeonGreen
 import com.duovial.theme.DuoVialNeonRed
 import com.duovial.theme.DuoVialTextPrimary
 import com.duovial.theme.DuoVialTextSecondary
+import com.duovial.theme.DuoVialOrange
 
 @Composable
 fun FatigueScreen(
@@ -67,12 +68,14 @@ fun FatigueScreen(
 ) {
     val faceStatus by AppStateManager.faceStatus.collectAsState()
     val fatigueConfig by AppStateManager.fatigueConfig.collectAsState()
+    val cameraState by AppStateManager.cameraState.collectAsState()
 
     var earThreshold by remember { mutableFloatStateOf(fatigueConfig.earThreshold.toFloat()) }
     var durationThreshold by remember { mutableLongStateOf(fatigueConfig.durationThresholdMs) }
     var maxAlerts by remember { mutableIntStateOf(fatigueConfig.maxAlertsPerHour) }
     var fatigueEnabled by remember { mutableStateOf(faceStatus.enabled) }
     var showSettings by remember { mutableStateOf(false) }
+    var showConcurrentCameraWarning by remember { mutableStateOf(cameraState.showConcurrentCameraWarning) }
 
     val statusLabel = when {
         !fatigueEnabled -> "Deteccion apagada"
@@ -202,6 +205,56 @@ fun FatigueScreen(
                 color = DuoVialTextPrimary,
                 fontWeight = FontWeight.W900
             )
+        }
+
+        // Banner de advertencia: cámaras concurrentes no soportadas
+        AnimatedVisibility(
+            visible = showConcurrentCameraWarning,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(start = 16.dp, end = 16.dp, top = 64.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DuoVialOrange.copy(alpha = 0.15f))
+                    .border(1.dp, DuoVialOrange.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Tu dispositivo no soporta cámaras simultáneas",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = DuoVialOrange,
+                            fontWeight = FontWeight.W700
+                        )
+                        Text(
+                            "El Modo Vigilante se pausará mientras uses la cámara frontal. Considera usar un wearable para detección en background.",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            color = DuoVialTextSecondary,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Text(
+                        "OK",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DuoVialOrange,
+                        fontWeight = FontWeight.W700,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clickable {
+                                showConcurrentCameraWarning = false
+                                AppStateManager.dismissConcurrentCameraWarning()
+                            }
+                    )
+                }
+            }
         }
 
         Column(
