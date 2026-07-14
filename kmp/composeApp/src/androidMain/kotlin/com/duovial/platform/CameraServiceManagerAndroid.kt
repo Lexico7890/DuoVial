@@ -192,6 +192,30 @@ class CameraServiceManagerAndroid(private val context: Context, private val sett
         return BackgroundCameraService.instance?.isConcurrentCamerasSupported() ?: false
     }
 
+    override fun setAutoStartAskBeforeActivate(ask: Boolean) {
+        BackgroundCameraService.instance?.setAutoStartAskBeforeActivate(ask)
+            ?: run { BackgroundCameraService.pendingAutoStartAskBeforeActivate = ask }
+        scope.launch { settingsManager?.setAutoStartAskBeforeActivate(ask) }
+    }
+
+    override fun isAutoStartAskBeforeActivate(): Boolean {
+        return BackgroundCameraService.instance?.isAutoStartAskBeforeActivate()
+            ?: BackgroundCameraService.pendingAutoStartAskBeforeActivate
+            ?: true
+    }
+
+    override fun setAutoStartCooldownHours(hours: Int) {
+        BackgroundCameraService.instance?.setAutoStartCooldownHours(hours)
+            ?: run { BackgroundCameraService.pendingAutoStartCooldownHours = hours }
+        scope.launch { settingsManager?.setAutoStartCooldownHours(hours) }
+    }
+
+    override fun getAutoStartCooldownHours(): Int {
+        return BackgroundCameraService.instance?.getAutoStartCooldownHours()
+            ?: BackgroundCameraService.pendingAutoStartCooldownHours
+            ?: 1
+    }
+
     override fun loadIncidents(): List<Incident> = IncidentRepository.scanIncidents(context)
 
     override fun watchCameraState() = AppStateManager.cameraState.value

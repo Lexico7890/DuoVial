@@ -46,4 +46,23 @@ class SettingsManagerAndroid(context: Context) : SettingsManager {
 
     override suspend fun setAutoStartEnabled(value: Boolean) =
         settings.putBoolean("auto_start_enabled", value)
+
+    // Auto-inicio inteligente: cooldown y configuración
+    override suspend fun getAutoStartCooldownHours(): Int =
+        settings.getInt("auto_start_cooldown_hours", 1)
+
+    override suspend fun setAutoStartCooldownHours(value: Int) =
+        settings.putInt("auto_start_cooldown_hours", value.coerceIn(1, 5))
+
+    override suspend fun isAutoStartAskBeforeActivate(): Boolean =
+        settings.getBoolean("auto_start_ask_before", true)
+
+    override suspend fun setAutoStartAskBeforeActivate(value: Boolean) =
+        settings.putBoolean("auto_start_ask_before", value)
+
+    override suspend fun getAutoStartCancelTimestamp(): Long =
+        settings.getLong("auto_start_cancel_timestamp", 0L)
+
+    override suspend fun setAutoStartCancelTimestamp(value: Long) =
+        settings.putLong("auto_start_cancel_timestamp", value)
 }

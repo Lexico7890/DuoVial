@@ -143,6 +143,13 @@ class BackgroundCameraService : LifecycleService() {
     @Volatile private var autoStartPending: Boolean = false
     private var autoStartRunnable: Runnable? = null
     private var lastAutoStartActivationTime: Long = 0L
+    // Auto-inicio inteligente
+    @Volatile private var autoStartAskBeforeActivate: Boolean = true
+    @Volatile private var autoStartCooldownHours: Int = 1
+    @Volatile private var autoStartCancelTimestamp: Long = 0L
+    private var autoStartCountdownRunnable: Runnable? = null
+    @Volatile private var autoStartCountdownValue: Int = 5
+    private var autoStartCooldownCheckRunnable: Runnable? = null
     
     // Capacidad de cámaras concurrentes (trasera + frontal)
     private var concurrentCamerasSupported: Boolean = false
@@ -161,6 +168,8 @@ class BackgroundCameraService : LifecycleService() {
         @Volatile var pendingEarThreshold: Double? = null
         @Volatile var pendingFatigueEnabled: Boolean? = null
         @Volatile var pendingAutoStartEnabled: Boolean? = null
+        @Volatile var pendingAutoStartAskBeforeActivate: Boolean? = null
+        @Volatile var pendingAutoStartCooldownHours: Int? = null
         @Volatile var activeFrontPreviewView: PreviewView? = null
         @Volatile var pendingFrontPreviewView: PreviewView? = null
         @Volatile var bubbleActive: Boolean = false
@@ -186,9 +195,12 @@ class BackgroundCameraService : LifecycleService() {
         const val ACTION_NOTIFICATION_STOP = "ACTION_NOTIFICATION_STOP"
         const val ACTION_TEMPERATURE_STOPPED = "ACTION_TEMPERATURE_STOPPED"
         const val ACTION_CANCEL_AUTO_START = "ACTION_CANCEL_AUTO_START"
+        const val ACTION_AUTO_START_ACTIVATE = "ACTION_AUTO_START_ACTIVATE"
+        const val ACTION_AUTO_START_CANCEL = "ACTION_AUTO_START_CANCEL"
         
-        const val AUTO_START_COOLDOWN_MS = 10 * 60 * 1000L // 10 minutos
+        const val AUTO_START_COOLDOWN_DEFAULT_MS = 60 * 60 * 1000L // 1 hora por defecto
         const val AUTO_START_DELAY_MS = 5000L // 5 segundos
+        const val AUTO_START_COUNTDOWN_NOTIFICATION_ID = 145
         
         const val TEMP_WARNING_CELSIUS = 40.0
         const val TEMP_DANGER_CELSIUS = 45.0
@@ -288,6 +300,21 @@ class BackgroundCameraService : LifecycleService() {
             DuoVialLog.i(TAG, "Auto-inicio aplicado desde pending: $it")
         }
 
+        pendingAutoStartAskBeforeActivate?.let {
+            autoStartAskBeforeActivate = it
+            pendingAutoStartAskBeforeActivate = null
+            DuoVialLog.i(TAG, "Auto-inicio preguntar antes de activar aplicado desde pending: $it")
+        }
+
+        pendingAutoStartCooldownHours?.let {
+            autoStartCooldownHours = it
+            pendingAutoStartCooldownHours = null
+            DuoVialLog.i(TAG, "Auto-inicio cooldown aplicado desde pending: ${it}h")
+        }
+
+        // Iniciar verificación periódica de cooldown expirado
+        startCooldownExpirationCheck()
+
         startServiceNotification()
         startCameraX()
         startLocationUpdates()
@@ -334,6 +361,8 @@ class BackgroundCameraService : LifecycleService() {
                 ACTION_NOTIFICATION_EVENT -> triggerCollisionEvent("Boton de Pantalla de Bloqueo")
                 ACTION_NOTIFICATION_STOP -> stopAndSaveBuffer()
                 ACTION_CANCEL_AUTO_START -> cancelAutoStart()
+                ACTION_AUTO_START_ACTIVATE -> onAutoStartActivate()
+                ACTION_AUTO_START_CANCEL -> onAutoStartCancel()
             }
         } else {
             startStandbyMode()
@@ -351,6 +380,11 @@ class BackgroundCameraService : LifecycleService() {
         stopLocationUpdates()
         removeFloatingBubble()
         stopTemperatureMonitoring()
+        stopCooldownExpirationCheck()
+        autoStartCountdownRunnable?.let { handler.removeCallbacks(it) }
+        autoStartCountdownRunnable = null
+        autoStartRunnable?.let { handler.removeCallbacks(it) }
+        autoStartRunnable = null
         currentActiveRecording?.stop()
         currentActiveRecording = null
         activePreview?.setSurfaceProvider(null)
@@ -1348,7 +1382,7 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     // ==========================================
-    // AUTO-INICO DEL VIGILANTE A 30 KM/H
+    // AUTO-INICIO INTELIGENTE DEL VIGILANTE
     // ==========================================
 
     fun setAutoStartEnabled(enabled: Boolean) {
@@ -1357,6 +1391,20 @@ class BackgroundCameraService : LifecycleService() {
     }
 
     fun isAutoStartEnabled(): Boolean = autoStartEnabled
+
+    fun setAutoStartAskBeforeActivate(ask: Boolean) {
+        autoStartAskBeforeActivate = ask
+        DuoVialLog.i(TAG, "Auto-inicio preguntar antes de activar: $ask")
+    }
+
+    fun setAutoStartCooldownHours(hours: Int) {
+        autoStartCooldownHours = hours.coerceIn(1, 5)
+        DuoVialLog.i(TAG, "Auto-inicio cooldown configurado a ${autoStartCooldownHours}h")
+    }
+
+    fun getAutoStartCooldownHours(): Int = autoStartCooldownHours
+
+    fun isAutoStartAskBeforeActivate(): Boolean = autoStartAskBeforeActivate
 
     /**
      * Verifica si el dispositivo soporta cámaras concurrentes (trasera + frontal).
@@ -1372,34 +1420,233 @@ class BackgroundCameraService : LifecycleService() {
         return concurrentCamerasSupported
     }
 
+    /**
+     * Cancela el auto-inicio pendiente y guarda el timestamp de cancelación
+     * para respetar el cooldown configurable.
+     */
     fun cancelAutoStart() {
         autoStartPending = false
+        autoStartCountdownRunnable?.let { handler.removeCallbacks(it) }
+        autoStartCountdownRunnable = null
         autoStartRunnable?.let { handler.removeCallbacks(it) }
         autoStartRunnable = null
-        DuoVialLog.i(TAG, "Auto-inicio cancelado por el usuario")
+        autoStartCountdownValue = 5
+        // Guardar timestamp de cancelación para cooldown
+        autoStartCancelTimestamp = System.currentTimeMillis()
+        // Cancelar notificación de cuenta regresiva
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.cancel(AUTO_START_COUNTDOWN_NOTIFICATION_ID)
+        } catch (e: Exception) {
+            DuoVialLog.e(TAG, "Error al cancelar notificación de auto-inicio: ${e.message}")
+        }
+        DuoVialLog.i(TAG, "Auto-inicio cancelado por el usuario. Cooldown de ${autoStartCooldownHours}h activado.")
     }
 
+    /**
+     * Acción cuando el usuario presiona "ACTIVAR" en la notificación de cuenta regresiva.
+     * Activa el Vigilante inmediatamente.
+     */
+    private fun onAutoStartActivate() {
+        if (isDestroyed) return
+        autoStartPending = false
+        autoStartCountdownRunnable?.let { handler.removeCallbacks(it) }
+        autoStartCountdownRunnable = null
+        autoStartRunnable?.let { handler.removeCallbacks(it) }
+        autoStartRunnable = null
+        autoStartCountdownValue = 5
+        // Cancelar notificación de cuenta regresiva
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.cancel(AUTO_START_COUNTDOWN_NOTIFICATION_ID)
+        } catch (e: Exception) {}
+        lastAutoStartActivationTime = System.currentTimeMillis()
+        DuoVialLog.i(TAG, "Auto-inicio activado manualmente por el usuario desde notificación")
+        startRecordingMode()
+    }
+
+    /**
+     * Acción cuando el usuario presiona "CANCELAR" en la notificación de cuenta regresiva.
+     * Cancela el auto-inicio y activa el cooldown.
+     */
+    private fun onAutoStartCancel() {
+        cancelAutoStart()
+    }
+
+    /**
+     * Verifica si el auto-inicio está en cooldown (el usuario canceló recientemente).
+     * @return true si está en cooldown, false si puede activarse
+     */
+    private fun isInAutoStartCooldown(): Boolean {
+        if (autoStartCancelTimestamp <= 0L) return false
+        val cooldownMs = autoStartCooldownHours.toLong() * 60L * 60L * 1000L
+        val elapsed = System.currentTimeMillis() - autoStartCancelTimestamp
+        return elapsed < cooldownMs
+    }
+
+    /**
+     * Verifica el cooldown y muestra notificación cuando expira.
+     */
+    private fun startCooldownExpirationCheck() {
+        stopCooldownExpirationCheck()
+        autoStartCooldownCheckRunnable = object : Runnable {
+            override fun run() {
+                if (isDestroyed) return
+                // Verificar si el cooldown acaba de expirar
+                if (autoStartCancelTimestamp > 0L && !isInAutoStartCooldown()) {
+                    // El cooldown expiró, resetear timestamp y notificar
+                    autoStartCancelTimestamp = 0L
+                    if (autoStartEnabled) {
+                        showCooldownExpiredNotification()
+                    }
+                }
+                // Verificar cada 60 segundos
+                handler.postDelayed(this, 60000L)
+            }
+        }
+        handler.postDelayed(autoStartCooldownCheckRunnable!!, 60000L)
+    }
+
+    private fun stopCooldownExpirationCheck() {
+        autoStartCooldownCheckRunnable?.let { handler.removeCallbacks(it) }
+        autoStartCooldownCheckRunnable = null
+    }
+
+    /**
+     * Muestra notificación cuando el cooldown expira.
+     */
+    private fun showCooldownExpiredNotification() {
+        val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("DuoVial - Auto-Inicio Reactivado")
+            .setContentText("El auto-inicio del Vigilante se ha reactivado. Se activará automáticamente al alcanzar 30 km/h.")
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.notify(AUTO_START_COUNTDOWN_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            DuoVialLog.e(TAG, "Error al mostrar notificación de cooldown expirado: ${e.message}")
+        }
+        DuoVialLog.i(TAG, "Cooldown de auto-inicio expirado. Auto-inicio reactivado.")
+    }
+
+    /**
+     * Lógica principal de verificación de auto-inicio.
+     * Se llama desde locationListener cada vez que se recibe una actualización de velocidad.
+     */
     private fun checkAutoStart() {
         if (!autoStartEnabled) return
         if (serviceState != ServiceState.STANDBY) return
         if (autoStartPending) return
         if (lastKnownSpeed < MIN_SPEED_FOR_EVENT_KMH) return
-        
-        val now = System.currentTimeMillis()
-        if (now - lastAutoStartActivationTime < AUTO_START_COOLDOWN_MS) return
-        
+
+        // Verificar cooldown
+        if (isInAutoStartCooldown()) {
+            DuoVialLog.v(TAG, "Auto-inicio en cooldown. Tiempo restante: ${getCooldownRemainingMinutes()} min")
+            return
+        }
+
         DuoVialLog.i(TAG, "Auto-inicio detectado: velocidad=${String.format("%.1f", lastKnownSpeed)} km/h")
         autoStartPending = true
-        
-        updateNotification("DuoVial - Auto-Inicio", "DuoVial se activara en 5 segundos. Toca para cancelar.", showActions = false)
-        
-        autoStartRunnable = Runnable {
-            if (isDestroyed || !autoStartPending) return@Runnable
-            autoStartPending = false
-            lastAutoStartActivationTime = System.currentTimeMillis()
-            DuoVialLog.i(TAG, "Auto-inicio ejecutado: cambiando a modo RECORDING")
-            startRecordingMode()
+
+        if (autoStartAskBeforeActivate) {
+            // Modo con notificación y cuenta regresiva
+            autoStartCountdownValue = 5
+            showAutoStartCountdownNotification(autoStartCountdownValue)
+            autoStartCountdownRunnable = object : Runnable {
+                override fun run() {
+                    if (isDestroyed || !autoStartPending) return
+                    autoStartCountdownValue--
+                    if (autoStartCountdownValue > 0) {
+                        showAutoStartCountdownNotification(autoStartCountdownValue)
+                        handler.postDelayed(this, 1000L)
+                    } else {
+                        // Tiempo agotado, activar automáticamente
+                        autoStartPending = false
+                        autoStartCountdownRunnable = null
+                        lastAutoStartActivationTime = System.currentTimeMillis()
+                        try {
+                            val manager = getSystemService(NotificationManager::class.java)
+                            manager?.cancel(AUTO_START_COUNTDOWN_NOTIFICATION_ID)
+                        } catch (e: Exception) {}
+                        DuoVialLog.i(TAG, "Auto-inicio ejecutado automáticamente tras cuenta regresiva")
+                        startRecordingMode()
+                    }
+                }
+            }
+            handler.postDelayed(autoStartCountdownRunnable!!, 1000L)
+        } else {
+            // Modo directo (sin preguntar)
+            autoStartRunnable = Runnable {
+                if (isDestroyed || !autoStartPending) return@Runnable
+                autoStartPending = false
+                autoStartRunnable = null
+                lastAutoStartActivationTime = System.currentTimeMillis()
+                DuoVialLog.i(TAG, "Auto-inicio ejecutado directamente (sin preguntar)")
+                startRecordingMode()
+            }
+            handler.postDelayed(autoStartRunnable!!, AUTO_START_DELAY_MS)
         }
-        handler.postDelayed(autoStartRunnable!!, AUTO_START_DELAY_MS)
+    }
+
+    /**
+     * Muestra la notificación de cuenta regresiva con los segundos restantes
+     * y el botón de CANCELAR.
+     */
+    private fun showAutoStartCountdownNotification(seconds: Int) {
+        val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+        // Acción ACTIVAR (mano izquierda)
+        val activateIntent = Intent(this, BackgroundCameraService::class.java).apply {
+            action = ACTION_AUTO_START_ACTIVATE
+        }
+        val activatePendingIntent = PendingIntent.getService(this, 3, activateIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+        // Acción CANCELAR (mano derecha)
+        val cancelIntent = Intent(this, BackgroundCameraService::class.java).apply {
+            action = ACTION_AUTO_START_CANCEL
+        }
+        val cancelPendingIntent = PendingIntent.getService(this, 4, cancelIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("🚗 DuoVial - Auto-Inicio")
+            .setContentText("El Vigilante se activará en $seconds segundos")
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(0, "ACTIVAR", activatePendingIntent)
+            .addAction(0, "CANCELAR", cancelPendingIntent)
+            .build()
+
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.notify(AUTO_START_COUNTDOWN_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            DuoVialLog.e(TAG, "Error al mostrar notificación de cuenta regresiva: ${e.message}")
+        }
+    }
+
+    /**
+     * Obtiene los minutos restantes de cooldown.
+     */
+    private fun getCooldownRemainingMinutes(): Long {
+        if (autoStartCancelTimestamp <= 0L) return 0L
+        val cooldownMs = autoStartCooldownHours.toLong() * 60L * 60L * 1000L
+        val elapsed = System.currentTimeMillis() - autoStartCancelTimestamp
+        val remaining = cooldownMs - elapsed
+        return if (remaining > 0) remaining / 60000L else 0L
     }
 }

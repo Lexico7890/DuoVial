@@ -111,6 +111,13 @@ class MainActivity : ComponentActivity() {
 
         val autoStart = settingsManager.isAutoStartEnabled()
         serviceManager.setAutoStartEnabled(autoStart)
+
+        // Auto-inicio inteligente
+        val autoStartAsk = settingsManager.isAutoStartAskBeforeActivate()
+        serviceManager.setAutoStartAskBeforeActivate(autoStartAsk)
+
+        val autoStartCooldown = settingsManager.getAutoStartCooldownHours()
+        serviceManager.setAutoStartCooldownHours(autoStartCooldown)
     }
 
     override fun onDestroy() {

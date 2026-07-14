@@ -13,4 +13,12 @@ interface SettingsManager {
     suspend fun setFatigueEnabled(value: Boolean)
     suspend fun isAutoStartEnabled(): Boolean
     suspend fun setAutoStartEnabled(value: Boolean)
+
+    // Auto-inicio inteligente
+    suspend fun getAutoStartCooldownHours(): Int
+    suspend fun setAutoStartCooldownHours(value: Int)
+    suspend fun isAutoStartAskBeforeActivate(): Boolean
+    suspend fun setAutoStartAskBeforeActivate(value: Boolean)
+    suspend fun getAutoStartCancelTimestamp(): Long
+    suspend fun setAutoStartCancelTimestamp(value: Long)
 }
