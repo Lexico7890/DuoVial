@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "lib": ["deno.ns", "deno.window"]
+  },
+  "imports": {
+    "@std/testing/asserts": "https://deno.land/std@0.168.0/testing/asserts.ts",
+    "@std/testing/mock": "https://deno.land/std@0.168.0/testing/mock.ts"
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-explicit-any"]
+    }
+  },
+  "test": {
+    "include": ["**/*_test.ts", "**/*.test.ts"],
+    "exclude": ["node_modules"]
+  }
+}

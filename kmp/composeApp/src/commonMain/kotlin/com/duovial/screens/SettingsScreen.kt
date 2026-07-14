@@ -31,11 +31,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +81,34 @@ fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
                 title = "Burbuja Flotante de Panico",
                 description = "Habilita un boton flotante arrastrable que permanece visible sobre otras aplicaciones para registrar incidentes instantaneamente."
             ) {
+                val context = LocalContext.current
+                val hasOverlayPermission = remember {
+                    mutableStateOf(android.provider.Settings.canDrawOverlays(context))
+                }
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (hasOverlayPermission.value) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialOrange.copy(alpha = 0.05f))
+                        .border(1.dp, if (hasOverlayPermission.value) DuoVialNeonGreen.copy(alpha = 0.25f) else DuoVialOrange.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (hasOverlayPermission.value) DuoVialNeonGreen else DuoVialOrange)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (hasOverlayPermission.value) "Habilitada en el sistema" else "No autorizada",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasOverlayPermission.value) DuoVialNeonGreen else DuoVialOrange
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -160,6 +192,175 @@ fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
                             .fillMaxWidth(progress).height(6.dp)
                             .background(DuoVialNeonGreen, RoundedCornerShape(3.dp))
                     )
+                }
+            }
+
+            // Auto-start toggle card
+            val autoStartEnabled = remember { mutableStateOf(serviceManager?.isAutoStartEnabled() ?: false) }
+            val autoStartAskBefore = remember { mutableStateOf(serviceManager?.isAutoStartAskBeforeActivate() ?: true) }
+            val autoStartCooldownHours = remember { mutableStateOf(serviceManager?.getAutoStartCooldownHours() ?: 1) }
+            SettingsCard(
+                icon = Icons.Outlined.FlashOn,
+                iconColor = DuoVialNeonGreen,
+                title = "Auto-Inicio del Vigilante",
+                description = "El Vigilante se activara automaticamente cuando alcances 30 km/h. Desactivado por defecto."
+            ) {
+                // Toggle principal
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (autoStartEnabled.value) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialBorder.copy(alpha = 0.3f))
+                        .border(1.dp, if (autoStartEnabled.value) DuoVialNeonGreen.copy(alpha = 0.25f) else DuoVialBorder, RoundedCornerShape(10.dp))
+                        .clickable {
+                            autoStartEnabled.value = !autoStartEnabled.value
+                            serviceManager?.setAutoStartEnabled(autoStartEnabled.value)
+                        }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (autoStartEnabled.value) "Auto-inicio ACTIVADO" else "Auto-inicio DESACTIVADO",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (autoStartEnabled.value) DuoVialNeonGreen else DuoVialTextSecondary
+                        )
+                        Text(
+                            text = "Se activara al alcanzar 30 km/h",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                            color = DuoVialTextSecondary
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(if (autoStartEnabled.value) DuoVialNeonGreen else DuoVialBorder)
+                    ) {
+                        if (autoStartEnabled.value) {
+                            Icon(
+                                imageVector = Icons.Outlined.FlashOn,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(16.dp).align(Alignment.Center)
+                            )
+                        }
+                    }
+                }
+
+                // Opciones avanzadas (solo visibles cuando auto-inicio está activado)
+                if (autoStartEnabled.value) {
+                    Spacer(Modifier.height(12.dp))
+
+                    // Toggle: Preguntar antes de activar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (autoStartAskBefore.value) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialBorder.copy(alpha = 0.3f))
+                            .border(1.dp, if (autoStartAskBefore.value) DuoVialNeonGreen.copy(alpha = 0.25f) else DuoVialBorder, RoundedCornerShape(10.dp))
+                            .clickable {
+                                autoStartAskBefore.value = !autoStartAskBefore.value
+                                serviceManager?.setAutoStartAskBeforeActivate(autoStartAskBefore.value)
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (autoStartAskBefore.value) "Preguntar antes de activar" else "Activar directamente",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (autoStartAskBefore.value) DuoVialNeonGreen else DuoVialTextSecondary
+                            )
+                            Text(
+                                text = if (autoStartAskBefore.value) "Muestra notificación con cuenta regresiva de 5 segundos" else "Se activa automáticamente sin preguntar",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                color = DuoVialTextSecondary
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(if (autoStartAskBefore.value) DuoVialNeonGreen else DuoVialBorder)
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    // Slider: Tiempo de espera antes de reactivar (cooldown)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DuoVialBorder.copy(alpha = 0.3f))
+                            .border(1.dp, DuoVialBorder, RoundedCornerShape(10.dp))
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = "Tiempo de espera al cancelar",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DuoVialTextPrimary
+                        )
+                        Text(
+                            text = "Si cancelas el auto-inicio, esperará ${autoStartCooldownHours.value} hora${if (autoStartCooldownHours.value > 1) "s" else ""} antes de preguntar de nuevo.",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                            color = DuoVialTextSecondary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val next = (autoStartCooldownHours.value - 1).coerceAtLeast(1)
+                                    autoStartCooldownHours.value = next
+                                    serviceManager?.setAutoStartCooldownHours(next)
+                                },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .border(1.dp, DuoVialNeonGreen, CircleShape)
+                                    .background(DuoVialGreenDim, CircleShape)
+                            ) { Text("-", color = DuoVialNeonGreen, style = MaterialTheme.typography.labelSmall) }
+
+                            Text(
+                                "${autoStartCooldownHours.value}h",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = DuoVialNeonGreen,
+                                fontWeight = FontWeight.W800
+                            )
+
+                            IconButton(
+                                onClick = {
+                                    val next = (autoStartCooldownHours.value + 1).coerceAtMost(5)
+                                    autoStartCooldownHours.value = next
+                                    serviceManager?.setAutoStartCooldownHours(next)
+                                },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .border(1.dp, DuoVialNeonGreen, CircleShape)
+                                    .background(DuoVialGreenDim, CircleShape)
+                            ) { Text("+", color = DuoVialNeonGreen, style = MaterialTheme.typography.labelSmall) }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        val progress = ((autoStartCooldownHours.value - 1) / 4f).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth().height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(DuoVialBorder)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress).height(4.dp)
+                                    .background(DuoVialNeonGreen, RoundedCornerShape(2.dp))
+                            )
+                        }
+                    }
                 }
             }
 

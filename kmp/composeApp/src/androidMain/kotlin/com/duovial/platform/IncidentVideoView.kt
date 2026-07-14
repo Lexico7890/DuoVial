@@ -9,10 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ConcatenatingMediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
@@ -27,15 +24,10 @@ fun IncidentVideoView(
     val partsKey = parts.joinToString(",")
 
     val player = remember(partsKey) {
-        val dataSourceFactory = DefaultDataSource.Factory(context)
         ExoPlayer.Builder(context).build().apply {
-            val mediaSources = parts.map { uri ->
-                ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(MediaItem.fromUri(Uri.parse(uri)))
-            }
-            val concatenated = ConcatenatingMediaSource()
-            mediaSources.forEach { concatenated.addMediaSource(it) }
-            setMediaSource(concatenated)
+            // Usar playlist nativo de ExoPlayer (mas robusto que ConcatenatingMediaSource)
+            val mediaItems = parts.map { MediaItem.fromUri(Uri.parse(it)) }
+            setMediaItems(mediaItems)
             prepare()
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF

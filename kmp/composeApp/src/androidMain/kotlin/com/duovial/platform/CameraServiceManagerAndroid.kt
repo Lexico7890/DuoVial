@@ -3,6 +3,7 @@ package com.duovial.platform
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.duovial.logging.DuoVialLog
 import com.duovial.services.BackgroundCameraService
 import com.duovial.services.CameraStatusListener
 import com.duovial.state.AppStateManager
@@ -11,8 +12,14 @@ import com.duovial.state.CameraStatus
 import com.duovial.state.FaceStatus
 import com.duovial.state.FatigueConfig
 import com.duovial.state.Incident
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
-class CameraServiceManagerAndroid(private val context: Context) : CameraServiceManager {
+class CameraServiceManagerAndroid(private val context: Context, private val settingsManager: com.duovial.state.SettingsManager? = null) : CameraServiceManager {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
         BackgroundCameraService.statusListener = object : CameraStatusListener {
@@ -25,6 +32,7 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
                     else -> CameraStatus.INACTIVO
                 }
                 AppStateManager.updateCameraStatus(mapped)
+                AppStateManager.updateBubbleActive(BackgroundCameraService.bubbleActive)
             }
 
             override fun onAccelChanged(gForce: Double) {
@@ -33,6 +41,10 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
 
             override fun onSpeedChanged(speed: Double) {
                 AppStateManager.updateSpeed(speed)
+            }
+
+            override fun onTemperatureChanged(tempCelsius: Float) {
+                AppStateManager.updateTemperature(tempCelsius)
             }
 
             override fun onFaceStatusChanged(
@@ -45,7 +57,18 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
             }
 
             override fun onDrowsinessDetected(timestamp: Long, earValue: Double) { }
+
+            override fun onConcurrentCamerasNotSupported() {
+                // Notificar a la UI que no se soportan cámaras concurrentes
+                DuoVialLog.w("CameraServiceManager", "Cámaras concurrentes no soportadas - se pausará el Vigilante al activar fatiga")
+                AppStateManager.updateConcurrentCamerasSupported(false)
+                AppStateManager.showConcurrentCameraWarning(true)
+            }
         }
+    }
+
+    fun onTemperatureChanged(tempCelsius: Float) {
+        AppStateManager.updateTemperature(tempCelsius)
     }
 
     private fun sendIntent(action: String) {
@@ -86,6 +109,10 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
         } else {
             BackgroundCameraService.pendingEarThreshold = threshold
         }
+        // Persistir el setting
+        scope.launch {
+            settingsManager?.setEarThreshold(threshold)
+        }
     }
 
     override fun setDurationThreshold(ms: Long) {
@@ -94,6 +121,10 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
             putExtra("duration_ms", ms)
         }
         ContextCompat.startForegroundService(context, intent)
+        // Persistir el setting
+        scope.launch {
+            settingsManager?.setDurationThresholdMs(ms)
+        }
     }
 
     override fun setMaxAlertsPerHour(max: Int) {
@@ -102,6 +133,10 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
             putExtra("max_alerts", max)
         }
         ContextCompat.startForegroundService(context, intent)
+        // Persistir el setting
+        scope.launch {
+            settingsManager?.setMaxAlertsPerHour(max)
+        }
     }
 
     override fun snoozeFatigueAlert(minutes: Int) {
@@ -128,6 +163,57 @@ class CameraServiceManagerAndroid(private val context: Context) : CameraServiceM
 
     override fun requestOverlayPermission() {
         Permissions.openOverlaySettings(context)
+    }
+
+    override fun getTemperature(): Float {
+        return BackgroundCameraService.instance?.getTemperature() ?: 0f
+    }
+
+    override fun setAutoStartEnabled(enabled: Boolean) {
+        BackgroundCameraService.instance?.setAutoStartEnabled(enabled)
+            ?: run { BackgroundCameraService.pendingAutoStartEnabled = enabled }
+        // Persistir el setting
+        scope.launch {
+            settingsManager?.setAutoStartEnabled(enabled)
+        }
+    }
+
+    override fun isAutoStartEnabled(): Boolean {
+        return BackgroundCameraService.instance?.isAutoStartEnabled()
+            ?: BackgroundCameraService.pendingAutoStartEnabled
+            ?: false
+    }
+
+    override fun cancelAutoStart() {
+        BackgroundCameraService.instance?.cancelAutoStart()
+    }
+
+    override fun isConcurrentCamerasSupported(): Boolean {
+        return BackgroundCameraService.instance?.isConcurrentCamerasSupported() ?: false
+    }
+
+    override fun setAutoStartAskBeforeActivate(ask: Boolean) {
+        BackgroundCameraService.instance?.setAutoStartAskBeforeActivate(ask)
+            ?: run { BackgroundCameraService.pendingAutoStartAskBeforeActivate = ask }
+        scope.launch { settingsManager?.setAutoStartAskBeforeActivate(ask) }
+    }
+
+    override fun isAutoStartAskBeforeActivate(): Boolean {
+        return BackgroundCameraService.instance?.isAutoStartAskBeforeActivate()
+            ?: BackgroundCameraService.pendingAutoStartAskBeforeActivate
+            ?: true
+    }
+
+    override fun setAutoStartCooldownHours(hours: Int) {
+        BackgroundCameraService.instance?.setAutoStartCooldownHours(hours)
+            ?: run { BackgroundCameraService.pendingAutoStartCooldownHours = hours }
+        scope.launch { settingsManager?.setAutoStartCooldownHours(hours) }
+    }
+
+    override fun getAutoStartCooldownHours(): Int {
+        return BackgroundCameraService.instance?.getAutoStartCooldownHours()
+            ?: BackgroundCameraService.pendingAutoStartCooldownHours
+            ?: 1
     }
 
     override fun loadIncidents(): List<Incident> = IncidentRepository.scanIncidents(context)

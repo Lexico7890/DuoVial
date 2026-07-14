@@ -15,11 +15,20 @@ enum class CameraStatus {
     ERROR
 }
 
+enum class TemperatureStatus {
+    NORMAL, WARNING, DANGER, CRITICAL
+}
+
 data class CameraState(
     val status: CameraStatus = CameraStatus.INACTIVO,
     val gForce: Double = 1.0,
     val speedKph: Double = 0.0,
-    val gForceThreshold: Double = 2.5
+    val gForceThreshold: Double = 2.5,
+    val bubbleActive: Boolean = false,
+    val temperature: Float = 0f,
+    val temperatureStatus: TemperatureStatus = TemperatureStatus.NORMAL,
+    val concurrentCamerasSupported: Boolean = true,
+    val showConcurrentCameraWarning: Boolean = false
 )
 
 data class FaceStatus(
@@ -74,6 +83,32 @@ object AppStateManager {
 
     internal fun updateGForceThreshold(threshold: Double) {
         _cameraState.value = _cameraState.value.copy(gForceThreshold = threshold)
+    }
+
+    internal fun updateBubbleActive(active: Boolean) {
+        _cameraState.value = _cameraState.value.copy(bubbleActive = active)
+    }
+
+    internal fun updateTemperature(tempCelsius: Float) {
+        val status = when {
+            tempCelsius >= 50f -> TemperatureStatus.CRITICAL
+            tempCelsius >= 45f -> TemperatureStatus.DANGER
+            tempCelsius >= 40f -> TemperatureStatus.WARNING
+            else -> TemperatureStatus.NORMAL
+        }
+        _cameraState.value = _cameraState.value.copy(temperature = tempCelsius, temperatureStatus = status)
+    }
+
+    internal fun updateConcurrentCamerasSupported(supported: Boolean) {
+        _cameraState.value = _cameraState.value.copy(concurrentCamerasSupported = supported)
+    }
+
+    internal fun showConcurrentCameraWarning(show: Boolean) {
+        _cameraState.value = _cameraState.value.copy(showConcurrentCameraWarning = show)
+    }
+
+    internal fun dismissConcurrentCameraWarning() {
+        _cameraState.value = _cameraState.value.copy(showConcurrentCameraWarning = false)
     }
 
     internal fun updateFaceStatus(status: FaceStatus) {

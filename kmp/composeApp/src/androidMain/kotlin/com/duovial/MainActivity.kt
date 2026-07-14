@@ -9,6 +9,7 @@ import androidx.core.view.WindowCompat
 import com.duovial.auth.AuthService
 import com.duovial.platform.AuthServiceAndroid
 import com.duovial.platform.CameraServiceManagerAndroid
+import com.duovial.platform.IncidentRepository
 import com.duovial.platform.Permissions
 import com.duovial.platform.SettingsManagerAndroid
 import com.duovial.state.AppStateManager
@@ -53,8 +54,8 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        serviceManager = CameraServiceManagerAndroid(this)
         settingsManager = SettingsManagerAndroid(this)
+        serviceManager = CameraServiceManagerAndroid(this, settingsManager)
 
         if (config.isAuthConfigured) {
             authService = AuthServiceAndroid(
@@ -70,6 +71,18 @@ class MainActivity : ComponentActivity() {
             scope.launch {
                 restoreSettings()
                 serviceManager.startStandby()
+            }
+        }
+
+        // Limpieza silenciosa de videos antiguos (>72 horas)
+        scope.launch(Dispatchers.IO) {
+            try {
+                val deleted = IncidentRepository.cleanupOldIncidents(this@MainActivity)
+                if (deleted > 0) {
+                    android.util.Log.i("MainActivity", "Videos antiguos eliminados: $deleted")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Error en limpieza de videos: ${e.message}")
             }
         }
 
@@ -89,6 +102,22 @@ class MainActivity : ComponentActivity() {
 
         val earThreshold = settingsManager.getEarThreshold()
         serviceManager.setEarThreshold(earThreshold)
+
+        val durationThreshold = settingsManager.getDurationThresholdMs()
+        serviceManager.setDurationThreshold(durationThreshold)
+
+        val maxAlerts = settingsManager.getMaxAlertsPerHour()
+        serviceManager.setMaxAlertsPerHour(maxAlerts)
+
+        val autoStart = settingsManager.isAutoStartEnabled()
+        serviceManager.setAutoStartEnabled(autoStart)
+
+        // Auto-inicio inteligente
+        val autoStartAsk = settingsManager.isAutoStartAskBeforeActivate()
+        serviceManager.setAutoStartAskBeforeActivate(autoStartAsk)
+
+        val autoStartCooldown = settingsManager.getAutoStartCooldownHours()
+        serviceManager.setAutoStartCooldownHours(autoStartCooldown)
     }
 
     override fun onDestroy() {
