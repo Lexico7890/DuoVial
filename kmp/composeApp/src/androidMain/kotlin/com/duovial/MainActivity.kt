@@ -16,8 +16,6 @@ import com.duovial.platform.CameraServiceManagerAndroid
 import com.duovial.platform.IncidentRepository
 import com.duovial.platform.Permissions
 import com.duovial.platform.SettingsManagerAndroid
-import com.duovial.state.AppStateManager
-import com.duovial.state.CameraServiceManager
 import com.duovial.state.OnboardingManager
 import com.duovial.theme.DuoVialTheme
 import kotlinx.coroutines.CoroutineScope
@@ -39,7 +37,7 @@ class MainActivity : ComponentActivity() {
     // Estado de permisos para el onboarding (reactivo para Compose)
     private val permissionStatuses = mutableStateMapOf<String, Boolean>()
 
-    // Configura aquí tus credenciales de AWS Cognito, o déjalas vacías
+    // Configura aqui tus credenciales de AWS Cognito, o dejalo vacio
     // para usar la app en modo demo (sin login).
     private val config = DuoVialConfig(
         cognitoUserPoolId = "",
@@ -47,14 +45,13 @@ class MainActivity : ComponentActivity() {
         cognitoRegion = "us-east-1"
     )
 
-    // Launcher para permisos iniciales (pre-onboarding)
+    // Launcher para permisos iniciales (post-onboarding)
     private val initialPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         results.forEach { (permission, granted) ->
             permissionStatuses[permission] = granted
         }
-        // Actualizar estados completos después de la solicitud
         permissionStatuses.putAll(Permissions.getAllPermissionStatuses(this))
 
         val allGranted = Permissions.allRequired().all { results[it] == true }
@@ -73,25 +70,7 @@ class MainActivity : ComponentActivity() {
         results.forEach { (permission, granted) ->
             permissionStatuses[permission] = granted
         }
-        // Actualizar estados completos después de la solicitud
         permissionStatuses.putAll(Permissions.getAllPermissionStatuses(this))
-    }
-        val allGranted = Permissions.allRequired().all { results[it] == true }
-        if (allGranted) {
-            scope.launch {
-                restoreSettings()
-                serviceManager.startStandby()
-            }
-        }
-    }
-
-    // Launcher para permisos del onboarding
-    private val onboardingPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        results.forEach { (permission, granted) ->
-            permissionStatuses[permission] = granted
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,7 +97,7 @@ class MainActivity : ComponentActivity() {
             permissionStatuses.putAll(Permissions.getAllPermissionStatuses(this@MainActivity))
 
             // TODO: TEMPORAL - Para testing, siempre mostrar onboarding
-            // Cuando el diseño esté listo, restaurar la línea de abajo y eliminar showOnboarding = true
+            // Cuando el diseno este listo, restaurar la linea de abajo y eliminar showOnboarding = true
             // showOnboarding = !onboardingManager.isOnboardingCompleted()
             showOnboarding = true
 
@@ -157,7 +136,7 @@ class MainActivity : ComponentActivity() {
                             onboardingManager.markAsCompleted()
                             showOnboarding = false
 
-                            // Después del onboarding, verificar permisos y arrancar servicio
+                            // Despues del onboarding, verificar permisos y arrancar servicio
                             if (!Permissions.areAllGranted(this@MainActivity)) {
                                 initialPermissionLauncher.launch(Permissions.allRequired())
                             } else {
@@ -167,7 +146,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onRequestPermissions = { permissions ->
-                        // Mapear nombres de permisos de Android a nombres de manifesto
+                        // Mapear nombres de permisos de UI a manifest de Android
                         val androidPermissions = permissions.mapNotNull { perm ->
                             when (perm) {
                                 "CAMERA" -> android.Manifest.permission.CAMERA
