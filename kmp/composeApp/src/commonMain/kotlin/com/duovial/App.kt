@@ -41,6 +41,7 @@ import com.duovial.screens.AccountScreen
 import com.duovial.screens.EventsScreen
 import com.duovial.screens.FatigueScreen
 import com.duovial.screens.MonitorScreen
+import com.duovial.screens.OnboardingScreen
 import com.duovial.screens.SettingsScreen
 import com.duovial.state.AppStateManager
 import com.duovial.state.CameraServiceManager
@@ -61,12 +62,28 @@ enum class Tab(val label: String) {
 @Composable
 fun DuoVialApp(
     serviceManager: CameraServiceManager? = null,
-    authService: AuthService? = null
+    authService: AuthService? = null,
+    showOnboarding: Boolean = false,
+    onOnboardingCompleted: () -> Unit = {},
+    onRequestPermissions: (List<String>) -> Unit = {},
+    onOpenPermissionSettings: () -> Unit = {},
+    onResetOnboarding: () -> Unit = {},
+    permissionStatuses: Map<String, Boolean> = emptyMap()
 ) {
     var activeTab by remember { mutableStateOf(Tab.MONITOR) }
     var showFatigue by remember { mutableStateOf(false) }
     var selectedIncident by remember { mutableStateOf<Incident?>(null) }
     val cameraState by AppStateManager.cameraState.collectAsState()
+
+    // Si el onboarding no está completado, mostrar pantalla de onboarding
+    if (showOnboarding) {
+        OnboardingScreen(
+            onOnboardingCompleted = onOnboardingCompleted,
+            onRequestPermissions = onRequestPermissions,
+            permissionStatuses = permissionStatuses
+        )
+        return
+    }
 
     CompositionLocalProvider(
         LocalCameraServiceManager provides serviceManager,
@@ -147,7 +164,15 @@ fun DuoVialApp(
                             serviceManager = serviceManager,
                             onIncidentSelected = { selectedIncident = it }
                         )
-                        Tab.SETTINGS -> SettingsScreen(serviceManager = serviceManager)
+                        Tab.SETTINGS -> SettingsScreen(
+                            serviceManager = serviceManager,
+                            permissionStatuses = permissionStatuses,
+                            onRequestPermission = { perm ->
+                                onRequestPermissions(listOf(perm))
+                            },
+                            onOpenPermissionSettings = onOpenPermissionSettings,
+                            onResetOnboarding = onResetOnboarding
+                        )
                         Tab.ACCOUNT -> AccountScreen(authService = authService)
                     }
                 }

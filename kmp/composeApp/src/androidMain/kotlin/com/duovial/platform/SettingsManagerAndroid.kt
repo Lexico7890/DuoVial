@@ -65,4 +65,11 @@ class SettingsManagerAndroid(context: Context) : SettingsManager {
 
     override suspend fun setAutoStartCancelTimestamp(value: Long) =
         settings.putLong("auto_start_cancel_timestamp", value)
+
+    // Onboarding
+    override suspend fun isOnboardingCompleted(): Boolean =
+        settings.getBoolean("onboarding_completed", false)
+
+    override suspend fun setOnboardingCompleted(value: Boolean) =
+        settings.putBoolean("onboarding_completed", value)
 }

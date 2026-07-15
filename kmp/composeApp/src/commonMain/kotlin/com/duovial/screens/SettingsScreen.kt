@@ -20,8 +20,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AdsClick
+import androidx.compose.material.icons.outlined.Bluetooth
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FlashOn
+import androidx.compose.material.icons.outlined.GpsFixed
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.Policy
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -56,7 +65,13 @@ import com.duovial.theme.DuoVialTextPrimary
 import com.duovial.theme.DuoVialTextSecondary
 
 @Composable
-fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
+fun SettingsScreen(
+    serviceManager: CameraServiceManager? = null,
+    permissionStatuses: Map<String, Boolean> = emptyMap(),
+    onRequestPermission: (String) -> Unit = {},
+    onOpenPermissionSettings: () -> Unit = {},
+    onResetOnboarding: () -> Unit = {}
+) {
     val cameraState by AppStateManager.cameraState.collectAsState()
     val threshold = cameraState.gForceThreshold
 
@@ -361,6 +376,105 @@ fun SettingsScreen(serviceManager: CameraServiceManager? = null) {
                             )
                         }
                     }
+                }
+            }
+
+            // Permisos de la app (B-02)
+            SettingsCard(
+                icon = Icons.Outlined.Policy,
+                iconColor = DuoVialNeonGreen,
+                title = "Permisos de la app",
+                description = "Estado de los permisos necesarios para el funcionamiento de DuoVial."
+            ) {
+                val permissionsList = listOf(
+                    Triple("CAMERA", Icons.Outlined.CameraAlt, "Cámara"),
+                    Triple("ACCESS_FINE_LOCATION", Icons.Outlined.GpsFixed, "Ubicación"),
+                    Triple("POST_NOTIFICATIONS", Icons.Outlined.NotificationsActive, "Notificaciones"),
+                    Triple("SYSTEM_ALERT_WINDOW", Icons.Outlined.Warning, "Overlay"),
+                    Triple("ACTIVITY_RECOGNITION", Icons.Outlined.Policy, "Actividad"),
+                    Triple("BLUETOOTH_CONNECT", Icons.Outlined.Bluetooth, "Bluetooth")
+                )
+
+                permissionsList.forEach { (permKey, icon, label) ->
+                    val isGranted = permissionStatuses[permKey] == true
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isGranted) DuoVialNeonGreen.copy(alpha = 0.05f) else DuoVialBorder.copy(alpha = 0.3f))
+                            .border(1.dp, if (isGranted) DuoVialNeonGreen.copy(alpha = 0.2f) else DuoVialBorder, RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isGranted) DuoVialNeonGreen else DuoVialOrange)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = DuoVialTextPrimary
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (isGranted) "Concedido" else "No concedido",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isGranted) DuoVialNeonGreen else DuoVialOrange
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                imageVector = if (isGranted) Icons.Filled.Check else Icons.Filled.Close,
+                                contentDescription = null,
+                                tint = if (isGranted) DuoVialNeonGreen else DuoVialOrange,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Botones de acción
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onOpenPermissionSettings,
+                        colors = ButtonDefaults.buttonColors(containerColor = DuoVialOrange.copy(alpha = 0.1f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("ABRIR AJUSTES",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DuoVialOrange)
+                    }
+                }
+            }
+
+            // Reset onboarding (para testing)
+            SettingsCard(
+                icon = Icons.Outlined.Warning,
+                iconColor = DuoVialTextSecondary,
+                title = "Herramientas de desarrollo",
+                description = "Opciones para testing y desarrollo."
+            ) {
+                Button(
+                    onClick = onResetOnboarding,
+                    colors = ButtonDefaults.buttonColors(containerColor = DuoVialBorder.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("REINICIAR ONBOARDING",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DuoVialTextSecondary)
                 }
             }
 
