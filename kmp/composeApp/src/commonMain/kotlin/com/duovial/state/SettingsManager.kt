@@ -21,4 +21,8 @@ interface SettingsManager {
     suspend fun setAutoStartAskBeforeActivate(value: Boolean)
     suspend fun getAutoStartCancelTimestamp(): Long
     suspend fun setAutoStartCancelTimestamp(value: Long)
+
+    // Onboarding
+    suspend fun isOnboardingCompleted(): Boolean
+    suspend fun setOnboardingCompleted(value: Boolean)
 }
