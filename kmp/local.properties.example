@@ -1,4 +1,20 @@
-# Android SDK location
-# Copy this file to local.properties and set your SDK path
-# Example: sdk.dir=C\:\\Users\\camip\\AppData\\Local\\Android\\Sdk
-sdk.dir=YOUR_ANDROID_SDK_PATH_HERE
+# ============================================================
+# DuoVial - Variables de Entorno (LOCAL)
+# ============================================================
+#
+# INSTRUCCIONES:
+# 1. Copia este archivo como "local.properties" en kmp/
+# 2. Reemplaza los valores con tus credenciales reales
+# 3. NUNCA subas local.properties al repositorio (ya está en .gitignore)
+#
+# ============================================================
+
+# ── Supabase ──────────────────────────────────────────────
+# Obtener en: Supabase Dashboard > Settings > API
+SUPABASE_URL=https://wksnlewsffluymawinez.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrc25sZXdzZmZsdXltYXdpbmV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3NDA4MzIsImV4cCI6MjA5ODMxNjgzMn0.62Pi8o1m99hnNOclEwey4Cy_yqINO7L0SAuwrp-Bv1Y
+
+# ── Google Sign-In ────────────────────────────────────────
+# Obtener en: Google Cloud Console > APIs & Services > Credentials
+# Tipo: Web application (NO Android)
+GOOGLE_WEB_CLIENT_ID=1002786951881-i9r9sgrp7qeopr5dsedemunq2gr1iv0i.apps.googleusercontent.com

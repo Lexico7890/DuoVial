@@ -1,5 +1,6 @@
 package com.duovial
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,18 +12,30 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import com.duovial.auth.AuthService
-import com.duovial.platform.AuthServiceAndroid
 import com.duovial.platform.CameraServiceManagerAndroid
+import com.duovial.platform.GoogleSignInHelper
 import com.duovial.platform.IncidentRepository
 import com.duovial.platform.Permissions
 import com.duovial.platform.SettingsManagerAndroid
+import com.duovial.platform.SupabaseAuthService
 import com.duovial.state.OnboardingManager
+import com.duovial.supabase.SupabaseClientProvider
 import com.duovial.theme.DuoVialTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+/**
+ * Activity principal de DuoVial.
+ *
+ * Flujo de inicialización:
+ * 1. Inicializar Supabase Client
+ * 2. Configurar AuthService (Supabase)
+ * 3. Configurar Google Sign-In
+ * 4. Verificar sesión existente
+ * 5. Mostrar UI
+ */
 class MainActivity : ComponentActivity() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -30,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var settingsManager: SettingsManagerAndroid
     private lateinit var onboardingManager: OnboardingManager
     private var authService: AuthService? = null
+    private var googleSignInHelper: GoogleSignInHelper? = null
 
     // Estado del onboarding (reactivo para Compose)
     private var showOnboarding by mutableStateOf(false)
@@ -37,13 +51,8 @@ class MainActivity : ComponentActivity() {
     // Estado de permisos para el onboarding (reactivo para Compose)
     private val permissionStatuses = mutableStateMapOf<String, Boolean>()
 
-    // Configura aqui tus credenciales de AWS Cognito, o dejalo vacio
-    // para usar la app en modo demo (sin login).
-    private val config = DuoVialConfig(
-        cognitoUserPoolId = "",
-        cognitoClientId = "",
-        cognitoRegion = "us-east-1"
-    )
+    // Configuración de Supabase (se lee automáticamente de BuildConfig/local.properties)
+    private val config = DuoVialConfig()
 
     // Launcher para permisos iniciales (post-onboarding)
     private val initialPermissionLauncher = registerForActivityResult(
@@ -73,31 +82,51 @@ class MainActivity : ComponentActivity() {
         permissionStatuses.putAll(Permissions.getAllPermissionStatuses(this))
     }
 
+    // Launcher para Google Sign-In
+    private val googleSignInLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        googleSignInHelper?.handleSignInResult(
+            data = result.data,
+            onIdTokenReady = { idToken ->
+                // Enviar token a Supabase
+                scope.launch {
+                    authService?.signInWithGoogle(idToken)
+                }
+            },
+            onError = { error ->
+                // El error ya se maneja en AuthStateManager
+                android.util.Log.e("MainActivity", "Google Sign-In error: $error")
+            }
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // ── Inicializar Supabase ─────────────────────────────────────
+        initializeSupabase()
+
+        // ── Configurar managers ──────────────────────────────────────
         settingsManager = SettingsManagerAndroid(this)
         onboardingManager = OnboardingManager(settingsManager)
         serviceManager = CameraServiceManagerAndroid(this, settingsManager)
 
-        if (config.isAuthConfigured) {
-            authService = AuthServiceAndroid(
-                region = config.cognitoRegion,
-                clientId = config.cognitoClientId,
-                userPoolId = config.cognitoUserPoolId
-            )
+        // ── Configurar Google Sign-In ────────────────────────────────
+        if (config.isGoogleConfigured) {
+            googleSignInHelper = GoogleSignInHelper(this)
         }
 
-        // Verificar si el onboarding fue completado
+        // ── Verificar onboarding ─────────────────────────────────────
         scope.launch {
             // Cargar estados de permisos actuales
             permissionStatuses.putAll(Permissions.getAllPermissionStatuses(this@MainActivity))
 
             // TODO: TEMPORAL - Para testing, siempre mostrar onboarding
-            // Cuando el diseno este listo, restaurar la linea de abajo y eliminar showOnboarding = true
+            // Cuando el diseño esté listo, restaurar la línea de abajo
             // showOnboarding = !onboardingManager.isOnboardingCompleted()
             showOnboarding = true
 
@@ -113,7 +142,7 @@ class MainActivity : ComponentActivity() {
             // Si showOnboarding es true, el servicio NO se arranca hasta completar el onboarding
         }
 
-        // Limpieza silenciosa de videos antiguos (>72 horas)
+        // ── Limpieza de videos antiguos ──────────────────────────────
         scope.launch(Dispatchers.IO) {
             try {
                 val deleted = IncidentRepository.cleanupOldIncidents(this@MainActivity)
@@ -125,6 +154,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // ── UI ───────────────────────────────────────────────────────
         setContent {
             DuoVialTheme {
                 DuoVialApp(
@@ -136,7 +166,7 @@ class MainActivity : ComponentActivity() {
                             onboardingManager.markAsCompleted()
                             showOnboarding = false
 
-                            // Despues del onboarding, verificar permisos y arrancar servicio
+                            // Después del onboarding, verificar permisos y arrancar servicio
                             if (!Permissions.areAllGranted(this@MainActivity)) {
                                 initialPermissionLauncher.launch(Permissions.allRequired())
                             } else {
@@ -188,10 +218,52 @@ class MainActivity : ComponentActivity() {
                             onboardingManager.reset()
                             showOnboarding = true
                         }
+                    },
+                    onGoogleSignIn = {
+                        launchGoogleSignIn()
                     }
                 )
             }
         }
+    }
+
+    /**
+     * Inicializa el cliente de Supabase y el servicio de auth.
+     */
+    private fun initializeSupabase() {
+        if (config.isSupabaseConfigured) {
+            try {
+                SupabaseClientProvider.initialize(
+                    url = config.supabaseUrl,
+                    key = config.supabaseAnonKey
+                )
+                authService = SupabaseAuthService(this)
+                android.util.Log.i("MainActivity", "Supabase inicializado correctamente")
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Error inicializando Supabase: ${e.message}")
+                // La app puede funcionar sin auth (modo anónimo)
+            }
+        } else {
+            android.util.Log.w("MainActivity", "Supabase no configurado. La app funcionará en modo demo.")
+            // Crear auth service en modo demo (como antes)
+            authService = SupabaseAuthService(this)
+        }
+    }
+
+    /**
+     * Lanza el flujo de Google Sign-In.
+     */
+    private fun launchGoogleSignIn() {
+        val helper = googleSignInHelper ?: run {
+            android.util.Log.w("MainActivity", "Google Sign-In no configurado")
+            return
+        }
+
+        helper.launchSignIn(
+            activity = this,
+            launcher = googleSignInLauncher,
+            webClientId = config.googleWebClientId
+        )
     }
 
     private suspend fun restoreSettings() {
