@@ -34,8 +34,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
+import com.duovial.auth.AuthFlowState
 import com.duovial.auth.AuthService
+import com.duovial.auth.AuthStateManager
+import com.duovial.auth.AuthViewModel
 import com.duovial.auth.LocalAuthService
+import com.duovial.auth.LocalAuthViewModel
 import com.duovial.platform.IncidentPlayerScreen
 import com.duovial.screens.AccountScreen
 import com.duovial.screens.EventsScreen
@@ -59,6 +63,14 @@ enum class Tab(val label: String) {
     ACCOUNT("Cuenta")
 }
 
+/**
+ * Pantalla principal de DuoVial.
+ *
+ * Flujo de autenticación:
+ * - Si el usuario no está autenticado y no es anónimo, muestra LoginScreen
+ * - Si está autenticado (o anónimo), muestra el contenido principal
+ * - Los usuarios anónimos pueden usar funciones básicas pero no storage/realtime
+ */
 @Composable
 fun DuoVialApp(
     serviceManager: CameraServiceManager? = null,
@@ -68,12 +80,22 @@ fun DuoVialApp(
     onRequestPermissions: (List<String>) -> Unit = {},
     onOpenPermissionSettings: () -> Unit = {},
     onResetOnboarding: () -> Unit = {},
+    onGoogleSignIn: () -> Unit = {},
     permissionStatuses: Map<String, Boolean> = emptyMap()
 ) {
     var activeTab by remember { mutableStateOf(Tab.MONITOR) }
     var showFatigue by remember { mutableStateOf(false) }
     var selectedIncident by remember { mutableStateOf<Incident?>(null) }
     val cameraState by AppStateManager.cameraState.collectAsState()
+    val authFlowState by AuthStateManager.flowState.collectAsState()
+    val authViewModel = remember { AuthViewModel() }
+
+    // Verificar si el usuario necesita login (no autenticado y no anónimo)
+    val needsLogin = when (authFlowState) {
+        is AuthFlowState.Unauthenticated -> true
+        is AuthFlowState.Loading -> false // Esperando verificación de sesión
+        else -> false
+    }
 
     // Si el onboarding no está completado, mostrar pantalla de onboarding
     if (showOnboarding) {
@@ -87,8 +109,18 @@ fun DuoVialApp(
 
     CompositionLocalProvider(
         LocalCameraServiceManager provides serviceManager,
-        LocalAuthService provides authService
+        LocalAuthService provides authService,
+        LocalAuthViewModel provides authViewModel
     ) {
+        // Si necesita login, mostrar LoginScreen
+        if (needsLogin) {
+            LoginScreen(
+                authService = authService,
+                onGoogleSignIn = onGoogleSignIn,
+                onClose = { /* No se puede cerrar login */ }
+            )
+            return@CompositionLocalProvider
+        }
         Scaffold(
             modifier = Modifier.fillMaxSize().background(DuoVialBackground),
             containerColor = DuoVialBackground,

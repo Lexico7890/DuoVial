@@ -9,12 +9,13 @@ camerax = "1.4.1"
 mlkit-face = "16.1.7"
 datastore = "1.1.1"
 multiplatform-settings = "1.2.0"
-aws-kotlin = "1.4.27"
 ktor = "3.0.3"
 coroutines = "1.9.0"
 workmanager = "2.10.0"
 media3 = "1.5.1"
 core-ktx = "1.15.0"
+supabase = "3.1.1"
+google-id = "1.1.1"
 
 [libraries]
 # Compose
@@ -44,9 +45,16 @@ mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatform-settings" }
 
-# AWS
-aws-cognitoidentityprovider = { module = "aws.sdk.kotlin:cognitoidentityprovider", version.ref = "aws-kotlin" }
-aws-cognitoidentity = { module = "aws.sdk.kotlin:cognitoidentity", version.ref = "aws-kotlin" }
+# Supabase
+supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase" }
+supabase-auth = { module = "io.github.jan-tennert.supabase:auth-kt" }
+supabase-realtime = { module = "io.github.jan-tennert.supabase:realtime-kt" }
+supabase-storage = { module = "io.github.jan-tennert.supabase:storage-kt" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
+supabase-functions = { module = "io.github.jan-tennert.supabase:functions-kt" }
+
+# Google Identity (para Google Sign-In)
+google-id = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "google-id" }
 
 # Network
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }

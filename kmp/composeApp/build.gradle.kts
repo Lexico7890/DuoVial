@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -7,6 +8,14 @@ plugins {
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// ── Cargar secretos desde local.properties (gitignored) ──────────────
+val localProps = Properties().apply {
+    val localPropsFile = rootProject.file("local.properties")
+    if (localPropsFile.exists()) {
+        localPropsFile.inputStream().use { load(it) }
+    }
 }
 
 kotlin {
@@ -38,8 +47,13 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.json)
 
-            implementation(libs.aws.cognitoidentityprovider)
-            implementation(libs.aws.cognitoidentity)
+            // Supabase Kotlin SDK (BOM + módulos)
+            implementation(platform(libs.supabase.bom))
+            implementation(libs.supabase.auth)
+            implementation(libs.supabase.realtime)
+            implementation(libs.supabase.storage)
+            implementation(libs.supabase.postgrest)
+            implementation(libs.supabase.functions)
         }
 
         androidMain.dependencies {
@@ -62,6 +76,9 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.ui)
+
+            // Google Identity para Google Sign-In
+            implementation(libs.google.id)
         }
     }
 }
@@ -76,6 +93,11 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0-kmp"
+
+        // BuildConfig: valores desde local.properties (gitignored)
+        buildConfigField("String", "SUPABASE_URL", "\"${localProps.getProperty("SUPABASE_URL", "")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${localProps.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\"")
     }
 
     buildTypes {
@@ -91,6 +113,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     packaging {

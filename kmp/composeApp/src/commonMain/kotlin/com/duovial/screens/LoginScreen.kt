@@ -41,9 +41,20 @@ import com.duovial.theme.DuoVialTextPrimary
 import com.duovial.theme.DuoVialTextSecondary
 import kotlinx.coroutines.launch
 
+/**
+ * Pantalla de autenticación unificada.
+ * Soporta: Login, Registro, Confirmación, Recuperar contraseña, Google, Anónimo.
+ *
+ * Flujo:
+ * 1. Login → Email + Contraseña + Botón Google + Modo anónimo
+ * 2. Registro → Email + Contraseña
+ * 3. Confirmación → Código de verificación
+ * 4. Forgot Password → Email de recuperación
+ */
 @Composable
 fun LoginScreen(
     authService: AuthService? = null,
+    onGoogleSignIn: () -> Unit = {},
     onClose: () -> Unit = {}
 ) {
     val authState by AuthStateManager.authState.collectAsState()
@@ -60,16 +71,19 @@ fun LoginScreen(
         AuthMode.LOGIN -> "Iniciar Sesión"
         AuthMode.SIGNUP -> "Crear Cuenta"
         AuthMode.CONFIRM -> "Confirmar Código"
+        AuthMode.FORGOT_PASSWORD -> "Recuperar Contraseña"
     }
 
     val subtitle = when (mode) {
         AuthMode.LOGIN -> "Ingresa tus credenciales DuoVial"
         AuthMode.SIGNUP -> "Regístrate para funciones premium"
         AuthMode.CONFIRM -> "Revisa tu correo e ingresa el código"
+        AuthMode.FORGOT_PASSWORD -> "Te enviaremos un link para restablecer tu contraseña"
     }
 
     val canSubmit = when (mode) {
         AuthMode.CONFIRM -> email.isNotBlank() && confirmCode.isNotBlank() && !authState.isLoading
+        AuthMode.FORGOT_PASSWORD -> email.isNotBlank() && !authState.isLoading
         else -> email.isNotBlank() && password.isNotBlank() && !authState.isLoading
     }
 
@@ -119,8 +133,8 @@ fun LoginScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            // Password field (not shown in confirm mode)
-            if (mode != AuthMode.CONFIRM) {
+            // Password field (not shown in confirm/forgot modes)
+            if (mode != AuthMode.CONFIRM && mode != AuthMode.FORGOT_PASSWORD) {
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = password,
@@ -145,7 +159,9 @@ fun LoginScreen(
                     keyboardActions = KeyboardActions(
                         onDone = {
                             focusManager.clearFocus()
-                            if (canSubmit) scope.launch { submitAction(authService, mode, email, password, confirmCode) }
+                            if (canSubmit) scope.launch {
+                                submitAction(authService, mode, email, password, confirmCode)
+                            }
                         }
                     ),
                     colors = textFieldColors(),
@@ -216,6 +232,7 @@ fun LoginScreen(
                             AuthMode.LOGIN -> "INICIAR SESIÓN"
                             AuthMode.SIGNUP -> "CREAR CUENTA"
                             AuthMode.CONFIRM -> "CONFIRMAR CÓDIGO"
+                            AuthMode.FORGOT_PASSWORD -> "ENVIAR LINK"
                         },
                         style = MaterialTheme.typography.labelLarge,
                         color = DuoVialBackground
@@ -223,29 +240,119 @@ fun LoginScreen(
                 }
             }
 
-            // Mode switcher
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                if (mode == AuthMode.LOGIN) {
-                    Text("¿No tienes cuenta? ", style = MaterialTheme.typography.bodySmall,
-                        color = DuoVialTextSecondary)
-                    Text("Regístrate",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
-                        color = DuoVialNeonGreen,
-                        modifier = Modifier.clickable { AuthStateManager.setMode(AuthMode.SIGNUP) }
+            // ── Divider con "o" (solo en Login y Registro) ──────────────
+            if (mode == AuthMode.LOGIN || mode == AuthMode.SIGNUP) {
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Divider(
+                        modifier = Modifier.weight(1f),
+                        color = DuoVialBorder
                     )
-                } else if (mode == AuthMode.SIGNUP) {
-                    Text("¿Ya tienes cuenta? ", style = MaterialTheme.typography.bodySmall,
-                        color = DuoVialTextSecondary)
-                    Text("Inicia sesión",
+                    Text(
+                        " o ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DuoVialTextSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                    Divider(
+                        modifier = Modifier.weight(1f),
+                        color = DuoVialBorder
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Google Sign-In button
+                OutlinedButton(
+                    onClick = onGoogleSignIn,
+                    enabled = !authState.isLoading,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = DuoVialTextPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = androidx.compose.ui.graphics.SolidColor(DuoVialBorder)
+                    )
+                ) {
+                    Text(
+                        "Continuar con Google",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+
+            // ── Modo anónimo (solo en Login) ───────────────────────────
+            if (mode == AuthMode.LOGIN) {
+                Spacer(Modifier.height(12.dp))
+                TextButton(
+                    onClick = {
+                        scope.launch { authService?.signInAnonymously() }
+                    },
+                    enabled = !authState.isLoading
+                ) {
+                    Text(
+                        "Usar sin cuenta",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W600),
+                        color = DuoVialTextSecondary
+                    )
+                }
+            }
+
+            // ── Forgot password link (solo en Login) ───────────────────
+            if (mode == AuthMode.LOGIN) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "¿Olvidaste tu contraseña?",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
+                    color = DuoVialNeonGreen,
+                    modifier = Modifier.clickable { AuthStateManager.setMode(AuthMode.FORGOT_PASSWORD) }
+                )
+            }
+
+            // ── Mode switcher ──────────────────────────────────────────
+            Spacer(Modifier.height(16.dp))
+            when (mode) {
+                AuthMode.LOGIN -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text("¿No tienes cuenta? ", style = MaterialTheme.typography.bodySmall,
+                            color = DuoVialTextSecondary)
+                        Text("Regístrate",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
+                            color = DuoVialNeonGreen,
+                            modifier = Modifier.clickable { AuthStateManager.setMode(AuthMode.SIGNUP) }
+                        )
+                    }
+                }
+                AuthMode.SIGNUP -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text("¿Ya tienes cuenta? ", style = MaterialTheme.typography.bodySmall,
+                            color = DuoVialTextSecondary)
+                        Text("Inicia sesión",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
+                            color = DuoVialNeonGreen,
+                            modifier = Modifier.clickable { AuthStateManager.setMode(AuthMode.LOGIN) }
+                        )
+                    }
+                }
+                AuthMode.FORGOT_PASSWORD -> {
+                    Text(
+                        "Volver al login",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
                         color = DuoVialNeonGreen,
                         modifier = Modifier.clickable { AuthStateManager.setMode(AuthMode.LOGIN) }
                     )
                 }
+                else -> {}
             }
 
             // Resend code (confirm mode)
@@ -285,5 +392,6 @@ private suspend fun submitAction(
         AuthMode.LOGIN -> authService?.login(email.trim(), password)
         AuthMode.SIGNUP -> authService?.signUp(email.trim(), password)
         AuthMode.CONFIRM -> authService?.confirmSignUp(email.trim(), code.trim())
+        AuthMode.FORGOT_PASSWORD -> authService?.resetPassword(email.trim())
     }
 }
