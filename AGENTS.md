@@ -18,7 +18,7 @@ cd kmp
 ./gradlew :composeApp:assembleRelease  # release build
 ```
 
-No CI workflows exist yet (`.github/` is empty). No test source sets exist in the codebase yet.
+No `.github/` directory or CI workflows exist yet. No test source sets exist in the codebase yet.
 
 ## Project structure
 
@@ -77,7 +77,7 @@ Supabase project is deployed (cloud). Key details:
 
 ## Environment variables
 
-See `.env.example` for the full list. Key vars use `SB_` prefix (not `SUPABASE_`) to avoid Supabase reserved names. Local dev uses `supabase/.env`.
+See `.env.example` for the full list. Key vars use `SB_` prefix (not `SUPABASE_`) to avoid Supabase reserved names. Local dev uses `supabase/.env` (copy from `supabase/.env.example`).
 
 ## Gotchas
 
@@ -97,4 +97,4 @@ Agent configs are in `.opencode/agents/`:
 - `mid-level-developer.md` — implementation tasks
 - `qa-engineer.md` — testing
 
-Full project context: `CONTEXT.md` (comprehensive spec). Development tickets: `TICKETS_DESARROLLO.md`.
+Development tickets: `TICKETS_DESARROLLO.md`.
