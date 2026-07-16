@@ -602,14 +602,14 @@ class BackgroundCameraService : LifecycleService() {
             val eventIntent = Intent(this, BackgroundCameraService::class.java).apply {
                 action = ACTION_NOTIFICATION_EVENT
             }
-            val eventPendingIntent = PendingIntent.getService(this, 1, eventIntent,
+            val eventPendingIntent = PendingIntent.getForegroundService(this, 1, eventIntent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             builder.addAction(0, "REGISTRAR EVENTO", eventPendingIntent)
             
             val stopIntent = Intent(this, BackgroundCameraService::class.java).apply {
                 action = ACTION_NOTIFICATION_STOP
             }
-            val stopPendingIntent = PendingIntent.getService(this, 2, stopIntent,
+            val stopPendingIntent = PendingIntent.getForegroundService(this, 2, stopIntent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             builder.addAction(0, "DETENER", stopPendingIntent)
         }
@@ -1608,14 +1608,14 @@ class BackgroundCameraService : LifecycleService() {
         val activateIntent = Intent(this, BackgroundCameraService::class.java).apply {
             action = ACTION_AUTO_START_ACTIVATE
         }
-        val activatePendingIntent = PendingIntent.getService(this, 3, activateIntent,
+        val activatePendingIntent = PendingIntent.getForegroundService(this, 3, activateIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         // Acción CANCELAR (mano derecha)
         val cancelIntent = Intent(this, BackgroundCameraService::class.java).apply {
             action = ACTION_AUTO_START_CANCEL
         }
-        val cancelPendingIntent = PendingIntent.getService(this, 4, cancelIntent,
+        val cancelPendingIntent = PendingIntent.getForegroundService(this, 4, cancelIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
