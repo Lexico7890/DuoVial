@@ -47,8 +47,7 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.json)
 
-            // Supabase Kotlin SDK (BOM + módulos)
-            implementation(platform(libs.supabase.bom))
+            // Supabase Kotlin SDK
             implementation(libs.supabase.auth)
             implementation(libs.supabase.realtime)
             implementation(libs.supabase.storage)
