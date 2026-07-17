@@ -78,6 +78,7 @@ kotlin {
 
             // Google Identity para Google Sign-In
             implementation(libs.google.id)
+            implementation(libs.play.services.auth)
         }
     }
 }

@@ -44,6 +44,7 @@ import com.duovial.platform.IncidentPlayerScreen
 import com.duovial.screens.AccountScreen
 import com.duovial.screens.EventsScreen
 import com.duovial.screens.FatigueScreen
+import com.duovial.screens.LoginScreen
 import com.duovial.screens.MonitorScreen
 import com.duovial.screens.OnboardingScreen
 import com.duovial.screens.SettingsScreen

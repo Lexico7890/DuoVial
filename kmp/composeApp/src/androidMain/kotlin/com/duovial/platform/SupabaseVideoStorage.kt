@@ -20,11 +20,6 @@ import java.io.File
  * Bucket: "incident-videos" (privado)
  * - Cada usuario tiene su carpeta: {userId}/{incidentId}/{filename}
  * - Solo el propietario puede ver sus videos (RLS)
- * - Videos se suben como MP4
- *
- * Limites:
- * - Tamaño máximo: 50MB por video
- * - Tipos permitidos: video/mp4, video/quicktime
  */
 class SupabaseVideoStorage(
     private val context: Context
@@ -41,7 +36,7 @@ class SupabaseVideoStorage(
 
     companion object {
         private const val BUCKET_NAME = "incident-videos"
-        private const val MAX_FILE_SIZE = 50 * 1024 * 1024L // 50MB
+        private const val MAX_FILE_SIZE = 50 * 1024 * 1024L
     }
 
     override suspend fun uploadVideo(
@@ -65,30 +60,21 @@ class SupabaseVideoStorage(
                 return@withContext Result.failure(Exception(error))
             }
 
-            // Construir ruta: {userId}/{incidentId}/{filename}
             val path = "$userId/$incidentId/${file.name}"
             val fileBytes = file.readBytes()
 
             Log.i(TAG, "Subiendo video: $path (${fileBytes.size} bytes)")
 
             // Subir a Supabase Storage
-            supabase.storage
-                .from(BUCKET_NAME)
-                .upload(path, fileBytes) {
-                    upsert = false
-                }
+            supabase.storage.from(BUCKET_NAME).upload(path, fileBytes)
 
             _uploadState.value = VideoStorageRepository.UploadState.Uploading(0.8f)
 
-            // Generar URL firmada (expira en 7 días)
-            val signedUrl = supabase.storage
-                .from(BUCKET_NAME)
-                .createSignedUrl(path) {
-                    expiresIn = 604800 // 7 días
-                }
+            // Generar URL firmada (expira en 7 días = 604800 segundos)
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path)
 
             _uploadState.value = VideoStorageRepository.UploadState.Success(signedUrl)
-            Log.i(TAG, "Video subido exitosamente: $signedUrl")
+            Log.i(TAG, "Video subido exitosamente")
 
             Result.success(signedUrl)
         } catch (e: Exception) {
@@ -104,11 +90,7 @@ class SupabaseVideoStorage(
         expiresIn: Long
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val signedUrl = supabase.storage
-                .from(BUCKET_NAME)
-                .createSignedUrl(path) {
-                    this.expiresIn = expiresIn
-                }
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path)
             Result.success(signedUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error obteniendo URL firmada: ${e.message}")
@@ -118,9 +100,7 @@ class SupabaseVideoStorage(
 
     override suspend fun deleteVideo(path: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            supabase.storage
-                .from(BUCKET_NAME)
-                .remove(path)
+            supabase.storage.from(BUCKET_NAME).delete(path)
             Log.i(TAG, "Video eliminado: $path")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -131,19 +111,16 @@ class SupabaseVideoStorage(
 
     override suspend fun videoExists(path: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            supabase.storage
-                .from(BUCKET_NAME)
-                .list(path.substringBeforeLast("/"))
-                .any { it.name == path.substringAfterLast("/") }
+            val folder = path.substringBeforeLast("/")
+            val fileName = path.substringAfterLast("/")
+            supabase.storage.from(BUCKET_NAME).list(folder)
+                .any { it.name == fileName }
         } catch (e: Exception) {
             Log.e(TAG, "Error verificando existencia: ${e.message}")
             false
         }
     }
 
-    /**
-     * Resetea el estado de subida.
-     */
     fun resetUploadState() {
         _uploadState.value = VideoStorageRepository.UploadState.Idle
     }

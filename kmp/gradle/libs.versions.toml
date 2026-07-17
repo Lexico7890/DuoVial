@@ -16,6 +16,7 @@ media3 = "1.5.1"
 core-ktx = "1.15.0"
 supabase = "3.1.1"
 google-id = "1.1.1"
+play-services-auth = "21.3.0"
 
 [libraries]
 # Compose
@@ -54,6 +55,7 @@ supabase-functions = { module = "io.github.jan-tennert.supabase:functions-kt", v
 
 # Google Identity (para Google Sign-In)
 google-id = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "google-id" }
+play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "play-services-auth" }
 
 # Network
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }

@@ -11,14 +11,16 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.user.UserSession
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
  * Implementación de AuthService usando Supabase Auth.
  *
- * Reemplaza el AuthServiceAndroid (demo mode) con una integración real.
  * Maneja:
  * - Login/Registro con email+contraseña
  * - Google Sign-In via OAuth
@@ -34,16 +36,14 @@ class SupabaseAuthService(
     private val supabase get() = SupabaseClientProvider.getClient()
 
     init {
-        // Verificar sesión existente al inicializar
         checkExistingSession()
     }
 
     /**
      * Verifica si hay una sesión válida al arrancar la app.
-     * Si hay refresh_token válido, refresca el access_token automáticamente.
      */
     private fun checkExistingSession() {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val session = supabase.auth.currentSessionOrNull()
                 if (session != null && !session.isExpired()) {
@@ -55,7 +55,6 @@ class SupabaseAuthService(
                         AuthStateManager.setLoggedOut()
                     }
                 } else if (session != null && session.isExpired()) {
-                    // Intentar refrescar
                     try {
                         supabase.auth.refreshCurrentSession()
                         val refreshedSession = supabase.auth.currentSessionOrNull()
@@ -110,17 +109,14 @@ class SupabaseAuthService(
                     this.email = email
                     this.password = password
                 }
-                // Verificar si requiere confirmación
                 val user = supabase.auth.currentUserOrNull()
                 if (user != null && user.emailConfirmedAt != null) {
-                    // Email confirmado automáticamente (confirmación deshabilitada)
                     val authUser = user.toAuthUser()
                     if (authUser != null) {
                         AuthStateManager.setUser(authUser)
-                        Log.i(TAG, "Registro exitoso (sin confirmación): ${authUser.email}")
+                        Log.i(TAG, "Registro exitoso: ${authUser.email}")
                     }
                 } else {
-                    // Requiere confirmación
                     AuthStateManager.setNeedsConfirmation(email)
                     Log.i(TAG, "Registro exitoso, confirmación pendiente: $email")
                 }
@@ -137,8 +133,7 @@ class SupabaseAuthService(
                 AuthStateManager.setLoading(true)
                 supabase.auth.verifyEmailOtp(
                     email = email,
-                    token = code,
-                    type = io.github.jan.supabase.auth.models.EmailOtpType.SIGNUP
+                    token = code
                 )
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
@@ -155,7 +150,7 @@ class SupabaseAuthService(
     override suspend fun resendConfirmationCode(email: String) {
         withContext(Dispatchers.IO) {
             try {
-                supabase.auth.sendEmailOTP(email = email)
+                supabase.auth.sendOtp(email = email)
                 Log.i(TAG, "Código reenviado a: $email")
             } catch (e: Exception) {
                 Log.e(TAG, "Error resendConfirmationCode: ${e.message}")
@@ -172,7 +167,6 @@ class SupabaseAuthService(
                 Log.i(TAG, "Sesión cerrada correctamente")
             } catch (e: Exception) {
                 Log.e(TAG, "Error logout: ${e.message}")
-                // Cerrar sesión localmente aunque falle el remoto
                 AuthStateManager.setLoggedOut()
             }
         }
@@ -232,7 +226,7 @@ class SupabaseAuthService(
         withContext(Dispatchers.IO) {
             try {
                 AuthStateManager.setLoading(true)
-                supabase.auth.linkIdentity(Email) {
+                supabase.auth.updateUser {
                     this.email = email
                     this.password = password
                 }
@@ -249,8 +243,13 @@ class SupabaseAuthService(
     }
 
     override fun isAnonymous(): Boolean {
-        val user = supabase.auth.currentUserOrNull()
-        return user?.isAnonymous == true
+        return try {
+            val user = supabase.auth.currentUserOrNull()
+            // En SDK v3, usuarios anónimos no tienen email
+            user?.email == null
+        } catch (e: Exception) {
+            false
+        }
     }
 
     override suspend fun getCurrentUser(): AuthUser? {
@@ -280,12 +279,11 @@ class SupabaseAuthService(
         }
     }
 
-    // ── Helpers privados ─────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────
 
-    /**
-     * Convierte un usuario de Supabase a nuestro modelo AuthUser.
-     */
-    private fun io.github.jan.supabase.auth.user.UserInfo.toAuthUser(): AuthUser? {
+    private fun UserInfo.toAuthUser(): AuthUser? {
+        // En SDK v3, verificar si es anónimo por la ausencia de email
+        val isUserAnonymous = email == null
         return AuthUser(
             id = id,
             email = email ?: "",
@@ -293,16 +291,13 @@ class SupabaseAuthService(
             displayName = userMetadata?.get("full_name")?.toString(),
             avatarUrl = userMetadata?.get("avatar_url")?.toString(),
             isLoggedIn = true,
-            isAnonymous = isAnonymous
+            isAnonymous = isUserAnonymous
         )
     }
 
-    /**
-     * Verifica si una sesión ha expirado.
-     */
     private fun UserSession.isExpired(): Boolean {
-        return expiresAt?.let { expiresAt ->
-            kotlinx.datetime.Clock.System.now() > expiresAt
+        return expiresAt?.let {
+            kotlinx.datetime.Clock.System.now() > it
         } ?: true
     }
 }
