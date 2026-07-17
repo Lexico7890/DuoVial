@@ -27,11 +27,11 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent?) {
-        val action = intent?.action
-        Log.i(TAG, "BootReceiver recibió acción: $action")
+        val receivedAction = intent?.action
+        Log.i(TAG, "BootReceiver recibió acción: $receivedAction")
 
-        if (action != Intent.ACTION_BOOT_COMPLETED && action != "android.intent.action.QUICKBOOT_POWERON") {
-            Log.w(TAG, "Acción no reconocida: $action — ignorando.")
+        if (receivedAction != Intent.ACTION_BOOT_COMPLETED && receivedAction != "android.intent.action.QUICKBOOT_POWERON") {
+            Log.w(TAG, "Acción no reconocida: $receivedAction — ignorando.")
             return
         }
 

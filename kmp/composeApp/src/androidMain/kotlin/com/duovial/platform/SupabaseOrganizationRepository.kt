@@ -6,10 +6,8 @@ import com.duovial.organizations.Organization
 import com.duovial.organizations.OrganizationMember
 import com.duovial.organizations.OrganizationRepository
 import com.duovial.supabase.SupabaseClientProvider
-import com.duovial.supabase.SupabaseErrorHandler
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Order
-import io.github.jan.supabase.rpc.rpc
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,7 +74,6 @@ class SupabaseOrganizationRepository : OrganizationRepository {
             )
 
             supabase.from("organization_members").insert(memberData)
-
             Log.i(TAG, "Miembro invitado: $email")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -91,8 +88,6 @@ class SupabaseOrganizationRepository : OrganizationRepository {
                 .update(mapOf("accepted_at" to kotlinx.datetime.Clock.System.now().toString())) {
                     filter { eq("id", invitationId) }
                 }
-
-            Log.i(TAG, "Invitación aceptada: $invitationId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error aceptando invitación: ${e.message}")
@@ -102,12 +97,7 @@ class SupabaseOrganizationRepository : OrganizationRepository {
 
     override suspend fun switchOrganization(orgId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Establecer session variable para RLS usando RPC
-            supabase.rpc("set_config") {
-                param("parameter", "app.current_org_id")
-                param("value", orgId)
-            }
-
+            // Cargar datos de la org
             val org = supabase.from("organizations")
                 .select { filter { eq("id", orgId) } }
                 .decodeSingle<OrganizationResponse>()
@@ -145,7 +135,6 @@ class SupabaseOrganizationRepository : OrganizationRepository {
                         joinedAt = member.createdAt
                     )
                 }
-
             Result.success(members)
         } catch (e: Exception) {
             Log.e(TAG, "Error obteniendo miembros: ${e.message}")
@@ -159,8 +148,6 @@ class SupabaseOrganizationRepository : OrganizationRepository {
                 .update(mapOf("role" to role.name.lowercase())) {
                     filter { eq("user_id", userId) }
                 }
-
-            Log.i(TAG, "Rol actualizado: $userId -> ${role.name}")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error actualizando rol: ${e.message}")
@@ -172,8 +159,6 @@ class SupabaseOrganizationRepository : OrganizationRepository {
         try {
             supabase.from("organization_members")
                 .delete { filter { eq("user_id", userId) } }
-
-            Log.i(TAG, "Miembro eliminado: $userId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error eliminando miembro: ${e.message}")

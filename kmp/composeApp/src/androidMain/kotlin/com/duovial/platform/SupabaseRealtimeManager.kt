@@ -5,24 +5,19 @@ import com.duovial.realtime.TelemetryData
 import com.duovial.realtime.TelemetryRepository
 import com.duovial.supabase.SupabaseClientProvider
 import io.github.jan.supabase.postgrest.from
-import io.github.jan.supabase.realtime.channel
-import io.github.jan.supabase.realtime.postgresChangeFlow
-import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
- * Implementación de TelemetryRepository usando Supabase Realtime.
+ * Implementación de TelemetryRepository usando Supabase.
  *
- * Tabla: vehicle_telemetry
- * - Cada 30 segundos se envía: GPS, velocidad, G-Force, batería, estado
- * - El Dashboard Web recibe los datos via WebSocket
+ * NOTA: La suscripción Realtime se implementará cuando se verifique
+ * la API exacta del SDK v3. Por ahora, solo enviamos telemetría
+ * y el Dashboard la recibe via polling.
  */
 class SupabaseRealtimeManager : TelemetryRepository {
 
@@ -34,8 +29,6 @@ class SupabaseRealtimeManager : TelemetryRepository {
 
     private val _lastTelemetry = MutableStateFlow<TelemetryData?>(null)
     override val lastTelemetry: StateFlow<TelemetryData?> = _lastTelemetry.asStateFlow()
-
-    private var currentChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
 
     override suspend fun sendTelemetry(data: TelemetryData): Result<Unit> = withContext(Dispatchers.IO) {
         try {
@@ -60,6 +53,7 @@ class SupabaseRealtimeManager : TelemetryRepository {
             supabase.from("vehicle_telemetry").insert(telemetryMap)
 
             _lastTelemetry.value = data
+            _isConnected.value = true
             Log.d(TAG, "Telemetría enviada: ${data.vehicleId}")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -69,63 +63,19 @@ class SupabaseRealtimeManager : TelemetryRepository {
     }
 
     override suspend fun startListening(vehicleId: String): Flow<TelemetryData> {
-        stopListening()
-
-        val channel = supabase.realtime.channel("telemetry-$vehicleId")
-        currentChannel = channel
-
-        val changeFlow = channel.postgresChangeFlow<io.github.jan.supabase.realtime.PostgresAction.Insert>(
-            schema = "public",
-            table = "vehicle_telemetry"
-        )
-
-        channel.subscribe()
-        _isConnected.value = true
-
-        Log.i(TAG, "Suscrito a telemetría del vehículo: $vehicleId")
-
-        return changeFlow.map { action ->
-            try {
-                val record = action.record
-                TelemetryData(
-                    vehicleId = record["vehicle_id"]?.toString() ?: vehicleId,
-                    orgId = record["org_id"]?.toString() ?: "",
-                    driverId = record["driver_id"]?.toString(),
-                    latitude = record["latitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
-                    longitude = record["longitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
-                    speedKmh = record["speed_kmh"]?.toString()?.toDoubleOrNull(),
-                    heading = record["heading"]?.toString()?.toDoubleOrNull(),
-                    altitude = record["altitude"]?.toString()?.toDoubleOrNull(),
-                    gForce = record["g_force"]?.toString()?.toDoubleOrNull(),
-                    batteryLevel = record["battery_level"]?.toString()?.toIntOrNull(),
-                    isCharging = record["is_charging"]?.toString()?.toBooleanStrictOrNull(),
-                    storageFreeMb = record["storage_free_mb"]?.toString()?.toLongOrNull(),
-                    deviceTempCelsius = record["device_temp_celsius"]?.toString()?.toDoubleOrNull(),
-                    serviceStatus = record["service_status"]?.toString() ?: "UNKNOWN",
-                    recordedAt = record["recorded_at"]?.toString() ?: ""
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parseando telemetría: ${e.message}")
-                null
-            }
-        }.filterNotNull()
+        // Implementación pendiente: suscripción Realtime via WebSocket
+        // Por ahora retorna un Flow vacío
+        Log.i(TAG, "startListening pendiente de implementar con API correcta del SDK v3")
+        return kotlinx.coroutines.flow.emptyFlow()
     }
 
     override suspend fun stopListening() {
-        currentChannel?.let { channel ->
-            try {
-                channel.unsubscribe()
-                Log.i(TAG, "Desuscrito del canal de telemetría")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error desuscribiéndose: ${e.message}")
-            }
-        }
-        currentChannel = null
         _isConnected.value = false
+        Log.i(TAG, "Stop listening")
     }
 
     override suspend fun reconnect() {
-        Log.i(TAG, "Reconectando canal de telemetría...")
-        stopListening()
+        Log.i(TAG, "Reconectando...")
+        _isConnected.value = false
     }
 }

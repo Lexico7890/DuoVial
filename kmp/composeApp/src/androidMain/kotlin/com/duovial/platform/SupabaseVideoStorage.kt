@@ -6,7 +6,6 @@ import com.duovial.storage.VideoStorageRepository
 import com.duovial.supabase.SupabaseClientProvider
 import com.duovial.supabase.SupabaseErrorHandler
 import io.github.jan.supabase.storage.storage
-import io.github.jan.supabase.storage.uploadAsFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,10 +15,6 @@ import java.io.File
 
 /**
  * Implementación de VideoStorageRepository usando Supabase Storage.
- *
- * Bucket: "incident-videos" (privado)
- * - Cada usuario tiene su carpeta: {userId}/{incidentId}/{filename}
- * - Solo el propietario puede ver sus videos (RLS)
  */
 class SupabaseVideoStorage(
     private val context: Context
@@ -71,7 +66,7 @@ class SupabaseVideoStorage(
             _uploadState.value = VideoStorageRepository.UploadState.Uploading(0.8f)
 
             // Generar URL firmada (expira en 7 días = 604800 segundos)
-            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path)
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, 604800)
 
             _uploadState.value = VideoStorageRepository.UploadState.Success(signedUrl)
             Log.i(TAG, "Video subido exitosamente")
@@ -90,7 +85,7 @@ class SupabaseVideoStorage(
         expiresIn: Long
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path)
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, expiresIn)
             Result.success(signedUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error obteniendo URL firmada: ${e.message}")
