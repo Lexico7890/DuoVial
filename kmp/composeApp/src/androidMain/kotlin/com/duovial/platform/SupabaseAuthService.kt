@@ -8,7 +8,6 @@ import com.duovial.auth.AuthUser
 import com.duovial.supabase.SupabaseClientProvider
 import com.duovial.supabase.SupabaseErrorHandler
 import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.models.OtpType
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
@@ -21,6 +20,10 @@ import kotlinx.coroutines.withContext
 
 /**
  * Implementación de AuthService usando Supabase Auth.
+ *
+ * Flujo simplificado (sin OTP):
+ * - signUp crea usuario + sesión automáticamente
+ * - No requiere confirmación de email por ahora
  */
 class SupabaseAuthService(
     private val context: Context
@@ -96,14 +99,15 @@ class SupabaseAuthService(
                     this.email = email
                     this.password = password
                 }
-                val user = supabase.auth.currentUserOrNull()
-                if (user != null && user.emailConfirmedAt != null) {
-                    val authUser = user.toAuthUser()
-                    if (authUser != null) {
-                        AuthStateManager.setUser(authUser)
-                    }
+                // En SDK v3, signUp puede crear sesión directamente
+                val user = supabase.auth.currentUserOrNull()?.toAuthUser()
+                if (user != null) {
+                    AuthStateManager.setUser(user)
+                    Log.i(TAG, "Registro exitoso: ${user.email}")
                 } else {
+                    // Requiere confirmación de email
                     AuthStateManager.setNeedsConfirmation(email)
+                    Log.i(TAG, "Registro exitoso, confirmación pendiente: $email")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error signUp: ${e.message}")
@@ -113,40 +117,15 @@ class SupabaseAuthService(
     }
 
     override suspend fun confirmSignUp(email: String, code: String) {
-        withContext(Dispatchers.IO) {
-            try {
-                AuthStateManager.setLoading(true)
-                // Verificar OTP de email - SDK v3 requiere type: OtpType.Email
-                supabase.auth.verifyEmailOtp(
-                    type = OtpType.Email,
-                    email = email,
-                    token = code
-                )
-                val user = supabase.auth.currentUserOrNull()?.toAuthUser()
-                if (user != null) {
-                    AuthStateManager.setUser(user)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error confirmSignUp: ${e.message}")
-                AuthStateManager.setError(SupabaseErrorHandler.mapError(e))
-            }
-        }
+        // Simplificado: signUp ya crea sesión directamente
+        // Este método se mantiene por compatibilidad
+        AuthStateManager.setLoading(false)
+        Log.i(TAG, "Confirmación no requerida (flujo simplificado)")
     }
 
     override suspend fun resendConfirmationCode(email: String) {
-        withContext(Dispatchers.IO) {
-            try {
-                // Reenviar OTP de email usando signUpWith que reenvía el email
-                supabase.auth.signUpWith(Email) {
-                    this.email = email
-                    this.password = "" // No se necesita password para reenviar
-                }
-                Log.i(TAG, "Código reenviado a: $email")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error resendConfirmationCode: ${e.message}")
-                AuthStateManager.setError(SupabaseErrorHandler.mapError(e))
-            }
-        }
+        // Simplificado: signUp ya crea sesión directamente
+        Log.i(TAG, "Reenvío no requerido (flujo simplificado)")
     }
 
     override suspend fun logout() {
