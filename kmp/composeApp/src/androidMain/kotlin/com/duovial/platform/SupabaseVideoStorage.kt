@@ -11,7 +11,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
 import java.io.File
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Implementación de VideoStorageRepository usando Supabase Storage.
@@ -65,8 +68,8 @@ class SupabaseVideoStorage(
 
             _uploadState.value = VideoStorageRepository.UploadState.Uploading(0.8f)
 
-            // Generar URL firmada (expira en 7 días = 604800 segundos)
-            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, 604800)
+            // Generar URL firmada (expira en 7 días)
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, 7.days)
 
             _uploadState.value = VideoStorageRepository.UploadState.Success(signedUrl)
             Log.i(TAG, "Video subido exitosamente")
@@ -85,7 +88,9 @@ class SupabaseVideoStorage(
         expiresIn: Long
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, expiresIn)
+            // Convertir segundos a Duration
+            val duration = expiresIn.seconds
+            val signedUrl = supabase.storage.from(BUCKET_NAME).createSignedUrl(path, duration)
             Result.success(signedUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error obteniendo URL firmada: ${e.message}")
