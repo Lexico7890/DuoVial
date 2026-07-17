@@ -28,7 +28,10 @@ import com.duovial.theme.DuoVialTextSecondary
 import kotlinx.coroutines.launch
 
 @Composable
-fun AccountScreen(authService: AuthService? = null) {
+fun AccountScreen(
+    authService: AuthService? = null,
+    onGoogleSignIn: () -> Unit = {}
+) {
     val authState by AuthStateManager.authState.collectAsState()
     val scope = rememberCoroutineScope()
     var showLogin by remember { mutableStateOf(false) }
@@ -125,6 +128,7 @@ fun AccountScreen(authService: AuthService? = null) {
         if (showLogin && authService != null) {
             LoginScreen(
                 authService = authService,
+                onGoogleSignIn = onGoogleSignIn,
                 onClose = { showLogin = false }
             )
         }
