@@ -20,13 +20,6 @@ import kotlinx.coroutines.withContext
 
 /**
  * Implementación de AuthService usando Supabase Auth.
- *
- * Maneja:
- * - Login/Registro con email+contraseña
- * - Google Sign-In via OAuth
- * - Recuperación de contraseña
- * - Sesiones anónimas
- * - Persistencia de sesión (Supabase SDK maneja tokens automáticamente)
  */
 class SupabaseAuthService(
     private val context: Context
@@ -39,9 +32,6 @@ class SupabaseAuthService(
         checkExistingSession()
     }
 
-    /**
-     * Verifica si hay una sesión válida al arrancar la app.
-     */
     private fun checkExistingSession() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -50,7 +40,7 @@ class SupabaseAuthService(
                     val user = session.user?.toAuthUser()
                     if (user != null) {
                         AuthStateManager.setUser(user)
-                        Log.i(TAG, "Sesión existente restaurada: ${user.email}")
+                        Log.i(TAG, "Sesión restaurada: ${user.email}")
                     } else {
                         AuthStateManager.setLoggedOut()
                     }
@@ -61,19 +51,16 @@ class SupabaseAuthService(
                         val user = refreshedSession?.user?.toAuthUser()
                         if (user != null) {
                             AuthStateManager.setUser(user)
-                            Log.i(TAG, "Sesión refrescada: ${user.email}")
                         } else {
                             AuthStateManager.setLoggedOut()
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "No se pudo refrescar sesión: ${e.message}")
                         AuthStateManager.setLoggedOut()
                     }
                 } else {
                     AuthStateManager.setLoggedOut()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error verificando sesión: ${e.message}")
                 AuthStateManager.setLoggedOut()
             }
         }
@@ -90,7 +77,6 @@ class SupabaseAuthService(
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
                     AuthStateManager.setUser(user)
-                    Log.i(TAG, "Login exitoso: ${user.email}")
                 } else {
                     AuthStateManager.setError("Error al obtener datos del usuario")
                 }
@@ -114,11 +100,9 @@ class SupabaseAuthService(
                     val authUser = user.toAuthUser()
                     if (authUser != null) {
                         AuthStateManager.setUser(authUser)
-                        Log.i(TAG, "Registro exitoso: ${authUser.email}")
                     }
                 } else {
                     AuthStateManager.setNeedsConfirmation(email)
-                    Log.i(TAG, "Registro exitoso, confirmación pendiente: $email")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error signUp: ${e.message}")
@@ -131,14 +115,15 @@ class SupabaseAuthService(
         withContext(Dispatchers.IO) {
             try {
                 AuthStateManager.setLoading(true)
+                // En SDK v3, verifyEmailOtp requiere el tipo OTP
                 supabase.auth.verifyEmailOtp(
                     email = email,
-                    token = code
+                    token = code,
+                    type = io.github.jan.supabase.auth.models.OtpType.Email
                 )
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
                     AuthStateManager.setUser(user)
-                    Log.i(TAG, "Confirmación exitosa: ${user.email}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error confirmSignUp: ${e.message}")
@@ -150,7 +135,8 @@ class SupabaseAuthService(
     override suspend fun resendConfirmationCode(email: String) {
         withContext(Dispatchers.IO) {
             try {
-                supabase.auth.sendOtp(email = email)
+                // En SDK v3, usar sendEmailOtp para reenviar código
+                supabase.auth.sendEmailOtp(email)
                 Log.i(TAG, "Código reenviado a: $email")
             } catch (e: Exception) {
                 Log.e(TAG, "Error resendConfirmationCode: ${e.message}")
@@ -164,9 +150,7 @@ class SupabaseAuthService(
             try {
                 supabase.auth.signOut()
                 AuthStateManager.setLoggedOut()
-                Log.i(TAG, "Sesión cerrada correctamente")
             } catch (e: Exception) {
-                Log.e(TAG, "Error logout: ${e.message}")
                 AuthStateManager.setLoggedOut()
             }
         }
@@ -183,7 +167,6 @@ class SupabaseAuthService(
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
                     AuthStateManager.setUser(user)
-                    Log.i(TAG, "Google Sign-In exitoso: ${user.email}")
                 } else {
                     AuthStateManager.setError("Error al obtener datos del usuario")
                 }
@@ -200,9 +183,7 @@ class SupabaseAuthService(
                 AuthStateManager.setLoading(true)
                 supabase.auth.resetPasswordForEmail(email)
                 AuthStateManager.setLoading(false)
-                Log.i(TAG, "Email de recuperación enviado a: $email")
             } catch (e: Exception) {
-                Log.e(TAG, "Error resetPassword: ${e.message}")
                 AuthStateManager.setError(SupabaseErrorHandler.mapError(e))
             }
         }
@@ -214,9 +195,7 @@ class SupabaseAuthService(
                 AuthStateManager.setLoading(true)
                 supabase.auth.signInAnonymously()
                 AuthStateManager.setAnonymous()
-                Log.i(TAG, "Sesión anónima iniciada")
             } catch (e: Exception) {
-                Log.e(TAG, "Error signInAnonymously: ${e.message}")
                 AuthStateManager.setError(SupabaseErrorHandler.mapError(e))
             }
         }
@@ -233,10 +212,8 @@ class SupabaseAuthService(
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
                     AuthStateManager.setUser(user)
-                    Log.i(TAG, "Cuenta vinculada a email: ${user.email}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error linkToEmail: ${e.message}")
                 AuthStateManager.setError(SupabaseErrorHandler.mapError(e))
             }
         }
@@ -245,7 +222,6 @@ class SupabaseAuthService(
     override fun isAnonymous(): Boolean {
         return try {
             val user = supabase.auth.currentUserOrNull()
-            // En SDK v3, usuarios anónimos no tienen email
             user?.email == null
         } catch (e: Exception) {
             false
@@ -279,10 +255,7 @@ class SupabaseAuthService(
         }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────
-
     private fun UserInfo.toAuthUser(): AuthUser? {
-        // En SDK v3, verificar si es anónimo por la ausencia de email
         val isUserAnonymous = email == null
         return AuthUser(
             id = id,
