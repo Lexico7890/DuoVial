@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 
 /**
  * Implementación de TelemetryRepository usando Supabase Realtime.
@@ -24,12 +23,6 @@ import kotlinx.serialization.Serializable
  * Tabla: vehicle_telemetry
  * - Cada 30 segundos se envía: GPS, velocidad, G-Force, batería, estado
  * - El Dashboard Web recibe los datos via WebSocket
- * - RLS garantiza aislamiento por organización
- *
- * Realtime:
- * - Se suscribe a cambios en vehicle_telemetry
- * - Filtra por vehicle_id
- * - Recibe INSERT en tiempo real
  */
 class SupabaseRealtimeManager : TelemetryRepository {
 
@@ -64,11 +57,10 @@ class SupabaseRealtimeManager : TelemetryRepository {
                 "recorded_at" to data.recordedAt
             )
 
-            supabase.from("vehicle_telemetry")
-                .insert(telemetryMap)
+            supabase.from("vehicle_telemetry").insert(telemetryMap)
 
             _lastTelemetry.value = data
-            Log.d(TAG, "Telemetría enviada: ${data.vehicleId} @ ${data.latitude},${data.longitude}")
+            Log.d(TAG, "Telemetría enviada: ${data.vehicleId}")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error enviando telemetría: ${e.message}")
@@ -77,16 +69,14 @@ class SupabaseRealtimeManager : TelemetryRepository {
     }
 
     override suspend fun startListening(vehicleId: String): Flow<TelemetryData> {
-        // Desuscribirse del canal anterior si existe
         stopListening()
 
         val channel = supabase.realtime.channel("telemetry-$vehicleId")
         currentChannel = channel
 
-        val changeFlow = channel.postgresChangeFlow<io.github.jan.supabase.realtime.PostgresAction>(
+        val changeFlow = channel.postgresChangeFlow<io.github.jan.supabase.realtime.PostgresAction.Insert>(
             schema = "public",
-            table = "vehicle_telemetry",
-            filter = "vehicle_id=eq.$vehicleId"
+            table = "vehicle_telemetry"
         )
 
         channel.subscribe()
@@ -95,33 +85,28 @@ class SupabaseRealtimeManager : TelemetryRepository {
         Log.i(TAG, "Suscrito a telemetría del vehículo: $vehicleId")
 
         return changeFlow.map { action ->
-            when (action) {
-                is io.github.jan.supabase.realtime.PostgresAction.Insert -> {
-                    try {
-                        val record = action.record
-                        TelemetryData(
-                            vehicleId = record["vehicle_id"]?.toString() ?: vehicleId,
-                            orgId = record["org_id"]?.toString() ?: "",
-                            driverId = record["driver_id"]?.toString(),
-                            latitude = record["latitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
-                            longitude = record["longitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
-                            speedKmh = record["speed_kmh"]?.toString()?.toDoubleOrNull(),
-                            heading = record["heading"]?.toString()?.toDoubleOrNull(),
-                            altitude = record["altitude"]?.toString()?.toDoubleOrNull(),
-                            gForce = record["g_force"]?.toString()?.toDoubleOrNull(),
-                            batteryLevel = record["battery_level"]?.toString()?.toIntOrNull(),
-                            isCharging = record["is_charging"]?.toString()?.toBooleanStrictOrNull(),
-                            storageFreeMb = record["storage_free_mb"]?.toString()?.toLongOrNull(),
-                            deviceTempCelsius = record["device_temp_celsius"]?.toString()?.toDoubleOrNull(),
-                            serviceStatus = record["service_status"]?.toString() ?: "UNKNOWN",
-                            recordedAt = record["recorded_at"]?.toString() ?: ""
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error parseando telemetría: ${e.message}")
-                        null
-                    }
-                }
-                else -> null
+            try {
+                val record = action.record
+                TelemetryData(
+                    vehicleId = record["vehicle_id"]?.toString() ?: vehicleId,
+                    orgId = record["org_id"]?.toString() ?: "",
+                    driverId = record["driver_id"]?.toString(),
+                    latitude = record["latitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
+                    longitude = record["longitude"]?.toString()?.toDoubleOrNull() ?: 0.0,
+                    speedKmh = record["speed_kmh"]?.toString()?.toDoubleOrNull(),
+                    heading = record["heading"]?.toString()?.toDoubleOrNull(),
+                    altitude = record["altitude"]?.toString()?.toDoubleOrNull(),
+                    gForce = record["g_force"]?.toString()?.toDoubleOrNull(),
+                    batteryLevel = record["battery_level"]?.toString()?.toIntOrNull(),
+                    isCharging = record["is_charging"]?.toString()?.toBooleanStrictOrNull(),
+                    storageFreeMb = record["storage_free_mb"]?.toString()?.toLongOrNull(),
+                    deviceTempCelsius = record["device_temp_celsius"]?.toString()?.toDoubleOrNull(),
+                    serviceStatus = record["service_status"]?.toString() ?: "UNKNOWN",
+                    recordedAt = record["recorded_at"]?.toString() ?: ""
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parseando telemetría: ${e.message}")
+                null
             }
         }.filterNotNull()
     }
@@ -132,7 +117,7 @@ class SupabaseRealtimeManager : TelemetryRepository {
                 channel.unsubscribe()
                 Log.i(TAG, "Desuscrito del canal de telemetría")
             } catch (e: Exception) {
-                Log.e(TAG, "Error desusciriéndose: ${e.message}")
+                Log.e(TAG, "Error desuscribiéndose: ${e.message}")
             }
         }
         currentChannel = null
@@ -142,6 +127,5 @@ class SupabaseRealtimeManager : TelemetryRepository {
     override suspend fun reconnect() {
         Log.i(TAG, "Reconectando canal de telemetría...")
         stopListening()
-        // La reconexión se hará automáticamente cuando se vuelva a llamar startListening
     }
 }
