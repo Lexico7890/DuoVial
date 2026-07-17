@@ -115,11 +115,10 @@ class SupabaseAuthService(
         withContext(Dispatchers.IO) {
             try {
                 AuthStateManager.setLoading(true)
-                // En SDK v3, verifyEmailOtp requiere el tipo OTP
+                // Verificar OTP de email
                 supabase.auth.verifyEmailOtp(
                     email = email,
-                    token = code,
-                    type = io.github.jan.supabase.auth.models.OtpType.Email
+                    token = code
                 )
                 val user = supabase.auth.currentUserOrNull()?.toAuthUser()
                 if (user != null) {
@@ -135,8 +134,8 @@ class SupabaseAuthService(
     override suspend fun resendConfirmationCode(email: String) {
         withContext(Dispatchers.IO) {
             try {
-                // En SDK v3, usar sendEmailOtp para reenviar código
-                supabase.auth.sendEmailOtp(email)
+                // Reenviar email de verificación
+                supabase.auth.sendVerificationEmail(email)
                 Log.i(TAG, "Código reenviado a: $email")
             } catch (e: Exception) {
                 Log.e(TAG, "Error resendConfirmationCode: ${e.message}")
