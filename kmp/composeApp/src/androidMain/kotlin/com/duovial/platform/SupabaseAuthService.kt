@@ -8,6 +8,7 @@ import com.duovial.auth.AuthUser
 import com.duovial.supabase.SupabaseClientProvider
 import com.duovial.supabase.SupabaseErrorHandler
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.models.OtpType
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
@@ -115,8 +116,9 @@ class SupabaseAuthService(
         withContext(Dispatchers.IO) {
             try {
                 AuthStateManager.setLoading(true)
-                // Verificar OTP de email
+                // Verificar OTP de email - SDK v3 requiere type: OtpType.Email
                 supabase.auth.verifyEmailOtp(
+                    type = OtpType.Email,
                     email = email,
                     token = code
                 )
@@ -134,8 +136,11 @@ class SupabaseAuthService(
     override suspend fun resendConfirmationCode(email: String) {
         withContext(Dispatchers.IO) {
             try {
-                // Reenviar email de verificación
-                supabase.auth.sendVerificationEmail(email)
+                // Reenviar OTP de email usando signUpWith que reenvía el email
+                supabase.auth.signUpWith(Email) {
+                    this.email = email
+                    this.password = "" // No se necesita password para reenviar
+                }
                 Log.i(TAG, "Código reenviado a: $email")
             } catch (e: Exception) {
                 Log.e(TAG, "Error resendConfirmationCode: ${e.message}")
