@@ -290,7 +290,13 @@ fun LoginScreen(
                 Spacer(Modifier.height(12.dp))
                 TextButton(
                     onClick = {
-                        scope.launch { authService?.signInAnonymously() }
+                        scope.launch {
+                            if (authService != null) {
+                                authService.signInAnonymously()
+                            } else {
+                                AuthStateManager.setError("Servicio de autenticación no disponible.")
+                            }
+                        }
                     },
                     enabled = !authState.isLoading
                 ) {
@@ -362,7 +368,13 @@ fun LoginScreen(
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.W800),
                     color = DuoVialNeonGreen,
                     modifier = Modifier.clickable {
-                        scope.launch { authService?.resendConfirmationCode(email) }
+                        scope.launch {
+                            if (authService != null) {
+                                authService.resendConfirmationCode(email)
+                            } else {
+                                AuthStateManager.setError("Servicio de autenticación no disponible.")
+                            }
+                        }
                     }
                 )
             }
@@ -388,10 +400,14 @@ private suspend fun submitAction(
     password: String,
     code: String
 ) {
+    if (authService == null) {
+        AuthStateManager.setError("Servicio de autenticación no disponible. Verifica la configuración de Supabase.")
+        return
+    }
     when (mode) {
-        AuthMode.LOGIN -> authService?.login(email.trim(), password)
-        AuthMode.SIGNUP -> authService?.signUp(email.trim(), password)
-        AuthMode.CONFIRM -> authService?.confirmSignUp(email.trim(), code.trim())
-        AuthMode.FORGOT_PASSWORD -> authService?.resetPassword(email.trim())
+        AuthMode.LOGIN -> authService.login(email.trim(), password)
+        AuthMode.SIGNUP -> authService.signUp(email.trim(), password)
+        AuthMode.CONFIRM -> authService.confirmSignUp(email.trim(), code.trim())
+        AuthMode.FORGOT_PASSWORD -> authService.resetPassword(email.trim())
     }
 }

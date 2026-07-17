@@ -206,7 +206,10 @@ fun DuoVialApp(
                             onOpenPermissionSettings = onOpenPermissionSettings,
                             onResetOnboarding = onResetOnboarding
                         )
-                        Tab.ACCOUNT -> AccountScreen(authService = authService)
+                        Tab.ACCOUNT -> AccountScreen(
+                            authService = authService,
+                            onGoogleSignIn = onGoogleSignIn
+                        )
                     }
                 }
             }

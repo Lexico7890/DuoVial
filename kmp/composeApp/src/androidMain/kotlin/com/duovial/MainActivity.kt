@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import com.duovial.auth.AuthService
+import com.duovial.auth.AuthStateManager
 import com.duovial.platform.CameraServiceManagerAndroid
 import com.duovial.platform.GoogleSignInHelper
 import com.duovial.platform.IncidentRepository
@@ -229,6 +230,10 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Inicializa el cliente de Supabase y el servicio de auth.
+     *
+     * IMPORTANTE: authService NUNCA debe quedar null.
+     * Si Supabase no está configurado o falla, se crea igualmente
+     * para que LoginScreen pueda mostrar errores al usuario.
      */
     private fun initializeSupabase() {
         if (config.isSupabaseConfigured) {
@@ -241,12 +246,15 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.i("MainActivity", "Supabase inicializado correctamente")
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Error inicializando Supabase: ${e.message}")
-                // La app puede funcionar sin auth (modo anónimo)
+                // Crear authService de todos modos para que LoginScreen pueda operar
+                authService = SupabaseAuthService(this)
+                // Asegurar que el LoginScreen se muestre
+                AuthStateManager.setLoggedOut()
             }
         } else {
             android.util.Log.w("MainActivity", "Supabase no configurado. La app funcionará en modo demo.")
-            // Crear auth service en modo demo (como antes)
-            authService = SupabaseAuthService(this)
+            // authService queda null — LoginScreen mostrará error claro
+            AuthStateManager.setLoggedOut()
         }
     }
 
